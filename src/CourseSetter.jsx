@@ -2286,66 +2286,6 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
 
       <div className="grid">
         <div>
-          <CollapsiblePanel title="Saved courses" defaultOpen={false}>
-            <div className="row">
-              <label htmlFor="svname">Name</label>
-              <input id="svname" type="text" className="wide" value={saveName}
-                     placeholder="e.g. Tuesday night, NW breeze"
-                     onChange={(e) => setSaveName(e.target.value)} />
-            </div>
-            <button onClick={handleSaveCourse}>Save current design</button>
-            {saveMsg && <p className="note">{saveMsg}</p>}
-            {savedCourses.length > 0 ? (
-              <table style={{ marginTop: 10 }}>
-                <tbody>
-                  {savedCourses
-                    .slice()
-                    .sort((a, b) => b.savedAt - a.savedAt)
-                    .map((c) => (
-                      <tr key={c.id}>
-                        <td className="nm">{c.name}</td>
-                        <td className="tiny">{new Date(c.savedAt).toLocaleDateString()}</td>
-                        <td>
-                          <button className="ghost" onClick={() => handleLoadCourse(c.id)}>Load</button>
-                        </td>
-                        <td>
-                          <button className="ghost" onClick={() => handleDeleteCourse(c.id)}>Delete</button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="note">
-                Nothing saved yet. Saves the design inputs — signal boat position, wind,
-                course, length settings — not the computed positions, so a saved course
-                still reflects any later improvements to how it's computed.
-              </p>
-            )}
-            <p className="note">Stored in this browser only — not synced anywhere.</p>
-          </CollapsiblePanel>
-
-          <CollapsiblePanel title="Course code" defaultOpen={false}>
-            <p className="note">
-              A short text code for this course — read it over the radio, text it, paste
-              it anywhere. Loading one on another device reproduces the same course there,
-              independent of anything saved in this browser.
-            </p>
-            <textarea readOnly value={courseCode} style={{ height: 54 }} />
-            <div className="row" style={{ marginTop: 8 }}>
-              <label>{courseCode.length} characters</label>
-              <button className="ghost" onClick={handleCopyCode}>Copy</button>
-            </div>
-            <div className="row" style={{ marginTop: 10 }}>
-              <label htmlFor="ccin">Load a code</label>
-              <input id="ccin" type="text" className="wide" value={courseCodeIn}
-                     placeholder="Paste a course code"
-                     onChange={(e) => setCourseCodeIn(e.target.value)} />
-            </div>
-            <button onClick={handleLoadCode} disabled={!courseCodeIn.trim()}>Load code</button>
-            {codeMsg && <p className="note">{codeMsg}</p>}
-          </CollapsiblePanel>
-
           <CollapsiblePanel title="Signal boat">
             <div className="row">
               <label htmlFor="lat">Latitude</label>
@@ -2628,6 +2568,66 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 </p>
               </>
             )}
+          </CollapsiblePanel>
+
+          <CollapsiblePanel title="Saved courses" defaultOpen={false}>
+            <div className="row">
+              <label htmlFor="svname">Name</label>
+              <input id="svname" type="text" className="wide" value={saveName}
+                     placeholder="e.g. Tuesday night, NW breeze"
+                     onChange={(e) => setSaveName(e.target.value)} />
+            </div>
+            <button onClick={handleSaveCourse}>Save current design</button>
+            {saveMsg && <p className="note">{saveMsg}</p>}
+            {savedCourses.length > 0 ? (
+              <table style={{ marginTop: 10 }}>
+                <tbody>
+                  {savedCourses
+                    .slice()
+                    .sort((a, b) => b.savedAt - a.savedAt)
+                    .map((c) => (
+                      <tr key={c.id}>
+                        <td className="nm">{c.name}</td>
+                        <td className="tiny">{new Date(c.savedAt).toLocaleDateString()}</td>
+                        <td>
+                          <button className="ghost" onClick={() => handleLoadCourse(c.id)}>Load</button>
+                        </td>
+                        <td>
+                          <button className="ghost" onClick={() => handleDeleteCourse(c.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="note">
+                Nothing saved yet. Saves the design inputs — signal boat position, wind,
+                course, length settings — not the computed positions, so a saved course
+                still reflects any later improvements to how it's computed.
+              </p>
+            )}
+            <p className="note">Stored in this browser only — not synced anywhere.</p>
+          </CollapsiblePanel>
+
+          <CollapsiblePanel title="Course code" defaultOpen={false}>
+            <p className="note">
+              A short text code for this course — read it over the radio, text it, paste
+              it anywhere. Loading one on another device reproduces the same course there,
+              independent of anything saved in this browser.
+            </p>
+            <textarea readOnly value={courseCode} style={{ height: 54 }} />
+            <div className="row" style={{ marginTop: 8 }}>
+              <label>{courseCode.length} characters</label>
+              <button className="ghost" onClick={handleCopyCode}>Copy</button>
+            </div>
+            <div className="row" style={{ marginTop: 10 }}>
+              <label htmlFor="ccin">Load a code</label>
+              <input id="ccin" type="text" className="wide" value={courseCodeIn}
+                     placeholder="Paste a course code"
+                     onChange={(e) => setCourseCodeIn(e.target.value)} />
+            </div>
+            <button onClick={handleLoadCode} disabled={!courseCodeIn.trim()}>Load code</button>
+            {codeMsg && <p className="note">{codeMsg}</p>}
           </CollapsiblePanel>
         </div>
 
