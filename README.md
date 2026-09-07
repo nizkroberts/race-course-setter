@@ -50,24 +50,40 @@ before it's usable end-to-end on the water.
 
 ## Signal coverage vs. `docs/courses/`
 
-`docs/courses/` documents far more course-signal variants than `CourseSetter.jsx`
-currently computes. The app implements the base case of each family; the finish-type
-and modifier variants (`docs/courses/SCHEMA.md` §3, "course signal grammar") are mostly
-not yet wired up:
+`CourseSetter.jsx` now computes every course signal in `docs/courses/` that has a
+generic, wind-relative geometry — 28 signals across 20 selectable base courses (the
+offset-mark `A` variants are an orthogonal checkbox, not separate dropdown entries;
+see the comment above `SEQUENCES` in the source for why):
 
-| Family | Documented signals | Implemented in `CourseSetter.jsx` |
+| Family | Documented signals | Coverage |
 |---|---|---|
-| windward-leeward | `L` `W` `M` `LA` `WA` `LR` `LG` `WR` `WG` `LS` `LAS` | `L`, `W` only |
-| triangle | `T` `TW` `TL` `TR` `TWA` `TLA` `TRA` | `T`, `TW`, `TL` only |
-| trapezoid | `I` `O` `IA` `IW` `OW` `IWA` `IS` `OS` | `I`, `O` only (no offset, no windward finish, no slalom) |
-| class-specific | `IOD`, Olympic triangle, `C`, `SL`, `TP1` | none |
-| random-leg | `X` | none — has no fixed wind-relative geometry, so it needs a different UI (free mark list) rather than the trig pipeline |
+| windward-leeward | `L` `W` `M` `LA` `WA` `LR` `LG` `WR` `WG` `LS` `LAS` | All 11 |
+| triangle | `T` `TW` `TL` `TR` `TWA` `TLA` `TRA` | All 7 |
+| trapezoid | `I` `O` `IA` `IW` `OW` `IWA` `IS` `OS` | All 8 |
+| class-specific | `IOD`, Olympic triangle (legacy) | Both — `C`, `SL`, `TP1`, Formula Kite etc. deliberately excluded, see below |
+| random-leg | `X` | Not implemented — see below |
 
-Closest, highest-value gaps to close first: the `A` offset-mark modifier (shared
-mechanism across all three geometric families — `M1A` support already exists in the
-computation chain for trapezoid/windward-leeward, just not exposed for triangle) and
-`IOD`, since it's a simple equal-leg 60/120 single-lap triangle and Optimist fleets are
-a stated primary user.
+**Deliberately out of scope**, and why:
+
+- **`C` / `SL` / `TP1` / Moth / Formula Kite / iQFOiL courses** — `class-specific.md`
+  says outright these are "class-defined... take geometry from the class association,
+  not the general tables." There's no generic formula to implement; supporting one
+  would mean encoding each class association's own numbers as a separate data source,
+  not a code change to the geometry engine.
+- **`X` / random-leg** — has no wind-relative geometry by design (permanent club marks,
+  navigation buoys, headlands). It needs an entirely different feature — a free-form
+  named-mark list and a course board, not the wind-axis/interior-angle pipeline this
+  app is built around.
+
+**Engineering approximations**, where the source docs give qualitative rather than
+exact numeric guidance (flagged in code comments at each site): slalom mark spacing
+(`LS`/`LAS`/`IS`/`OS` — leg length and angle are adjustable inputs, not fixed
+constants, since the docs only say "roughly two minutes total" / "15–20 degrees");
+reach-finish placement for `LR`/`LG`/`WR`/`WG`/`TR`; the trapezoid beat-to-finish mark
+5 (`IW`/`OW`/`IWA`); and the IOD course, which is built as a true equilateral triangle
+(the simplest construction consistent with the doc's own "equal reference distance"
+and "equal leg length" constraints) rather than reproducing its literal but internally
+inconsistent "60/120" wording.
 
 ## Development
 

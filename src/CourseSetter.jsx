@@ -69,7 +69,7 @@ function toDDM(lat, lon) {
     const a = Math.abs(v);
     const d = Math.floor(a);
     const m = (a - d) * 60;
-    return `${h} ${String(d).padStart(pad, "0")}\u00b0 ${m.toFixed(3).padStart(6, "0")}'`;
+    return `${h} ${String(d).padStart(pad, "0")}° ${m.toFixed(3).padStart(6, "0")}'`;
   };
   return { lat: f(lat, "N", "S", 2), lon: f(lon, "E", "W", 3) };
 }
@@ -100,11 +100,24 @@ function windStats(obs) {
 
 /* ============================================================
    COURSE TEMPLATES
-   Geometry is computed from interior angles and leg ratios,
-   never from hard-coded position tables.
+   Geometry is computed from interior angles and leg ratios, never from
+   hard-coded position tables — see computeCourse(). SEQUENCES below is
+   the one thing that *is* hand-transcribed data, taken verbatim from the
+   rounding-order tables in docs/courses/*.md, one entry per documented
+   signal. That's deliberate: a rounding order is a discrete published
+   list, not something to derive, and docs/courses/SCHEMA.md itself
+   recommends treating those tables as regression fixtures.
+
+   The offset mark (1a) is NOT written into these sequences. It's an
+   orthogonal modifier — computeCourse() inserts M1A automatically after
+   every M1 when it's enabled — because every documented offset variant
+   (LA, WA, TWA, TLA, TRA, IA, IWA, LAS) is exactly its base signal with
+   1a spliced in at that point and nothing else changed. See
+   COURSES[...].offsetEligible for which base signals that applies to.
    ============================================================ */
 
 const SEQUENCES = {
+  // ---- windward / leeward ----
   L: {
     1: ["START", "M1", "FINISH"],
     2: ["START", "M1", "G4", "M1", "FINISH"],
@@ -116,21 +129,58 @@ const SEQUENCES = {
     3: ["START", "M1", "G4", "M1", "G4", "FINISH"],
     4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "FINISH"],
   },
-  TL: {
-    2: ["START", "M1", "M2", "G3", "M1", "FINISH"],
-    3: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "FINISH"],
-    4: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "M2", "G3", "M1", "FINISH"],
+  M: {
+    2: ["START", "M1", "G4", "M1", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "FINISH"],
+    4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "M1", "FINISH"],
+  },
+  LR: {
+    2: ["START", "M1", "G4", "M1", "G4p", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "G4p", "FINISH"],
+    4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "M1", "G4p", "FINISH"],
+  },
+  LG: {
+    2: ["START", "M1", "G4", "M1", "G4s", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "G4s", "FINISH"],
+    4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "M1", "G4s", "FINISH"],
+  },
+  WR: {
+    2: ["START", "G1", "G4", "G1p", "FINISH"],
+    3: ["START", "G1", "G4", "G1", "G4", "G1p", "FINISH"],
+    4: ["START", "G1", "G4", "G1", "G4", "G1", "G4", "G1p", "FINISH"],
+  },
+  WG: {
+    2: ["START", "G1", "G4", "G1s", "FINISH"],
+    3: ["START", "G1", "G4", "G1", "G4", "G1s", "FINISH"],
+  },
+  LS: {
+    2: ["START", "M1", "G4", "M1", "G4p", "S1", "S2", "S3", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "G4p", "S1", "S2", "S3", "FINISH"],
+  },
+
+  // ---- triangle ----
+  T: {
+    1: ["START", "M1", "M2", "G3", "FINISH"],
+    2: ["START", "M1", "M2", "G3", "M1", "G3", "FINISH"],
+    3: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "M2", "G3", "FINISH"],
   },
   TW: {
     2: ["START", "M1", "M2", "G3", "FINISH"],
     3: ["START", "M1", "M2", "G3", "M1", "G3", "FINISH"],
     4: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "M2", "G3", "FINISH"],
   },
-  T: {
-    1: ["START", "M1", "M2", "G3", "FINISH"],
-    2: ["START", "M1", "M2", "G3", "M1", "G3", "FINISH"],
-    3: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "M2", "G3", "FINISH"],
+  TL: {
+    2: ["START", "M1", "M2", "G3", "M1", "FINISH"],
+    3: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "FINISH"],
+    4: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "M2", "G3", "M1", "FINISH"],
   },
+  TR: {
+    1: ["START", "M1", "M2", "FINISH"],
+    2: ["START", "M1", "G3", "M1", "M2", "FINISH"],
+    3: ["START", "M1", "G3", "M1", "G3", "M1", "M2", "FINISH"],
+  },
+
+  // ---- trapezoid ----
   I: {
     2: ["START", "M1", "G4", "M1", "M2", "G3", "FINISH"],
     3: ["START", "M1", "G4", "M1", "G4", "M1", "M2", "G3", "FINISH"],
@@ -141,17 +191,79 @@ const SEQUENCES = {
     3: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3", "FINISH"],
     4: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3", "M2", "G3", "FINISH"],
   },
+  IW: {
+    1: ["START", "M1", "M2", "G3p", "M5", "FINISH"],
+    2: ["START", "M1", "G4", "M1", "M2", "G3p", "M5", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "M2", "G3p", "M5", "FINISH"],
+    4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "M1", "M2", "G3p", "M5", "FINISH"],
+  },
+  OW: {
+    2: ["START", "M1", "M2", "G3", "M2", "G3p", "M5", "FINISH"],
+    3: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3p", "M5", "FINISH"],
+    4: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3", "M2", "G3p", "M5", "FINISH"],
+  },
+  IS: {
+    2: ["START", "M1", "G4", "M1", "M2", "G3p", "S1", "S2", "S3", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "M2", "G3p", "S1", "S2", "S3", "FINISH"],
+  },
+  OS: {
+    2: ["START", "M1", "M2", "G3", "M2", "G3p", "S1", "S2", "S3", "FINISH"],
+    3: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3p", "S1", "S2", "S3", "FINISH"],
+  },
+
+  // ---- class-specific ----
+  IOD: {
+    1: ["START", "M1", "M2", "G3", "FINISH"],
+  },
+  OLY: {
+    4: ["START", "M1", "M2", "G3", "M1", "G3", "M1", "M2", "G3", "FINISH"],
+  },
 };
 
-const SIGNALS = {
-  L: { family: "wl", name: "Windward/leeward, leeward finish", beats: [1, 2, 3, 4] },
-  W: { family: "wl", name: "Windward/leeward, windward finish", beats: [2, 3, 4] },
-  TL: { family: "tri", name: "Triangle, leeward finish", beats: [2, 3, 4] },
-  TW: { family: "tri", name: "Triangle, windward finish", beats: [2, 3, 4] },
-  T: { family: "triT", name: "Triangle, line mid-beat", beats: [1, 2, 3] },
-  I: { family: "trap", name: "Trapezoid, inner loop", beats: [2, 3, 4] },
-  O: { family: "trap", name: "Trapezoid, outer loop", beats: [2, 3, 4] },
+/** Every course this app can lay out, grouped and ordered the way a club
+ *  race officer should meet them — windward/leeward and triangle first,
+ *  trapezoid and class-specific behind the "more" scroll — per the
+ *  functionality spec's "prescriptive over configurable" principle.
+ *
+ *  finish: which branch of computeCourse's finish switch applies.
+ *  offsetEligible: only the 8 base signals the docs actually name an
+ *    "A" variant for (LA, WA, TWA, TLA, TRA, IA, IWA, LAS) get the
+ *    offset checkbox; toggling it is what turns L into LA, TW into TWA,
+ *    and so on — see the SEQUENCES comment above. */
+const COURSES = {
+  L: { family: "wl", name: "Windward/leeward, leeward finish", beats: [1, 2, 3, 4], finish: "atStart", offsetEligible: true, group: "Windward/Leeward" },
+  W: { family: "wl", name: "Windward/leeward, windward finish", beats: [2, 3, 4], finish: "windward", offsetEligible: true, group: "Windward/Leeward" },
+  M: { family: "wl", name: "Match racing, starboard roundings", beats: [2, 3, 4], finish: "atStart", mirror: true, group: "Windward/Leeward",
+       note: "Mirrored (starboard) roundings for two-boat match racing. Geometry is otherwise identical to L." },
+  LR: { family: "wl", name: "Windward/leeward, reaching finish (port)", beats: [2, 3, 4], finish: "reachGate", finishSide: "p", group: "Windward/Leeward" },
+  LG: { family: "wl", name: "Windward/leeward, reaching finish (starboard)", beats: [2, 3, 4], finish: "reachGate", finishSide: "s", group: "Windward/Leeward" },
+  WR: { family: "wlTwin", name: "Twin windward marks, reaching finish (port)", beats: [2, 3, 4], finish: "reachGate1", finishSide: "p", group: "Windward/Leeward",
+        note: "Windward mark is a gate (1s/1p) — needs room for two boats abeam at the top of the beat." },
+  WG: { family: "wlTwin", name: "Twin windward marks, reaching finish (starboard)", beats: [2, 3], finish: "reachGate1", finishSide: "s", group: "Windward/Leeward",
+        note: "Windward mark is a gate (1s/1p) — needs room for two boats abeam at the top of the beat." },
+  LS: { family: "wl", name: "Windward/leeward, slalom finish", beats: [2, 3], finish: "slalomGate", offsetEligible: true, group: "Windward/Leeward",
+        note: "Board and foiling classes." },
+
+  T: { family: "triT", name: "Triangle, start/finish mid-beat", beats: [1, 2, 3], finish: "atStart", group: "Triangle",
+       note: "One committee boat serves as both start and finish, unrestricted — confirm that in the sailing instructions." },
+  TW: { family: "tri", name: "Triangle, windward finish", beats: [2, 3, 4], finish: "windward", offsetEligible: true, group: "Triangle" },
+  TL: { family: "tri", name: "Triangle, leeward finish", beats: [2, 3, 4], finish: "atStart", offsetEligible: true, group: "Triangle" },
+  TR: { family: "tri", name: "Triangle, reaching finish", beats: [1, 2, 3], finish: "reachWing", offsetEligible: true, group: "Triangle" },
+
+  I: { family: "trap", name: "Trapezoid, inner loop", beats: [2, 3, 4], finish: "trapFinish", offsetEligible: true, group: "Trapezoid" },
+  O: { family: "trap", name: "Trapezoid, outer loop", beats: [2, 3, 4], finish: "trapFinish", group: "Trapezoid" },
+  IW: { family: "trap", name: "Trapezoid, inner loop, beat to finish", beats: [1, 2, 3, 4], finish: "trapWindward", offsetEligible: true, group: "Trapezoid" },
+  OW: { family: "trap", name: "Trapezoid, outer loop, beat to finish", beats: [2, 3, 4], finish: "trapWindward", group: "Trapezoid" },
+  IS: { family: "trap", name: "Trapezoid, inner loop, slalom finish", beats: [2, 3], finish: "slalomTrap", group: "Trapezoid", note: "Board and foiling classes." },
+  OS: { family: "trap", name: "Trapezoid, outer loop, slalom finish", beats: [2, 3], finish: "slalomTrap", group: "Trapezoid", note: "Board and foiling classes." },
+
+  IOD: { family: "iod", name: "Optimist course (IOD)", beats: [1], finish: "iodFinish", noDigit: true, group: "Class-specific",
+         note: "Single lap, equal legs. Keep the beat short — this is sized for Optimists, not faster fleets." },
+  OLY: { family: "oly", name: "Olympic triangle (legacy)", beats: [4], finish: "windwardOly", noDigit: true, legacy: true, group: "Class-specific",
+         note: "Nine legs, superseded by the trapezoid at championship level. Use only if class or event tradition specifically calls for it." },
 };
+
+const COURSE_GROUPS = ["Windward/Leeward", "Triangle", "Trapezoid", "Class-specific"];
 
 /* A single average speed cannot time a course, because families differ in how
    much of their length is beating. A trapezoid and a windward/leeward of equal
@@ -198,6 +310,8 @@ function estimateMinutes(legs, sp) {
 
 function computeCourse(p) {
   const wa = p.windAxis;
+  const cfg = COURSES[p.signal];
+  const fam = cfg.family;
   const marks = {};
   const put = (id, label, role, pos, side) =>
     (marks[id] = { id, label, role, side: side || null, ...pos });
@@ -227,121 +341,159 @@ function computeCourse(p) {
       destination(ctr.lat, ctr.lon, norm(wa + 90), gateHalf),
       "port"
     );
-    marks[id] = { id, virtual: true, ...ctr };
+    marks[id] = { id, label: `${num}s/${num}p`, virtual: true, ...ctr };
   };
 
-  const fam = SIGNALS[p.signal].family;
   const B = p.beat;
+  const windwardSide = cfg.mirror ? "stbd" : "port";
   let ref;
 
   if (fam === "wl" || fam === "trap") {
     ref = destination(lineCtr.lat, lineCtr.lon, wa, p.startOffset);
     gate("G4", ref, 4);
-    put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), "port");
-  } else if (fam === "tri") {
+    put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), windwardSide);
+  } else if (fam === "wlTwin") {
+    // WR / WG: the windward mark is a gate too, so boats can round abeam of
+    // each other rather than converging on a single point.
     ref = destination(lineCtr.lat, lineCtr.lon, wa, p.startOffset);
-    gate("G3", ref, 3);
+    gate("G4", ref, 4);
+    gate("G1", destination(ref.lat, ref.lon, wa, B), 1);
+  } else if (fam === "tri" || fam === "oly") {
+    // Modern triangle: leeward mark is a gate. Olympic triangle (legacy):
+    // a single leeward mark, per class-specific.md's marks table — that's
+    // the only geometric difference between the two families.
+    ref = destination(lineCtr.lat, lineCtr.lon, wa, p.startOffset);
+    if (fam === "oly") put("G3", "3", "Leeward mark", ref, "port");
+    else gate("G3", ref, 3);
     put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), "port");
+  } else if (fam === "iod") {
+    // IOD: mark 1, mark 2 and gate 3 all sit at the same distance from the
+    // reference (the middle of the start line), spaced 120 degrees apart.
+    // class-specific.md states both "reference to each mark is equal" and
+    // "leg lengths are all equal" for this course — together those two
+    // constraints force an equilateral triangle, which is what this
+    // constructs, regardless of the source doc's own "60/120" label for it.
+    ref = lineCtr;
+    put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), "port");
+    put("M2", "2", "Wing / reach mark", destination(ref.lat, ref.lon, norm(wa - 120), B), "port");
+    gate("G3", destination(ref.lat, ref.lon, norm(wa + 120), B), 3);
   } else {
     // Course T: reference is the middle of the start line, mid-beat.
     ref = lineCtr;
     put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B / 2), "port");
-    const m3 = destination(ref.lat, ref.lon, norm(wa + 180), B / 2);
-    put("G3", "3", "Leeward mark", m3, "port");
+    put("G3", "3", "Leeward mark", destination(ref.lat, ref.lon, norm(wa + 180), B / 2), "port");
   }
 
-  // --- Second mark -------------------------------------------------
-  if (fam === "tri" || fam === "triT") {
+  // --- Second mark (wing mark, triangle-family courses) --------------
+  if (fam === "tri" || fam === "triT" || fam === "oly") {
     // Sine rule from the interior angles. Mark 2 lies to port of the beat.
-    // Sine rule off the leeward mark. On course T the reference is mid-beat, so
-    // the leeward mark itself is the triangle vertex; elsewhere it is the
-    // reference point. Either way the base leg is a full beat length.
+    // On course T and the Olympic triangle the leeward mark itself is the
+    // triangle's base vertex; on the modern triangle it coincides with the
+    // reference point, so using `ref` there is equivalent and simpler.
     const { a, b, g } = p.triAngles;
-    const base = fam === "triT" ? marks.G3 : ref;
+    const base = fam === "triT" || fam === "oly" ? marks.G3 : ref;
     const d32 = (B * Math.sin(rad(a))) / Math.sin(rad(b));
-    put(
-      "M2",
-      "2",
-      "Wing mark",
-      destination(base.lat, base.lon, norm(wa - g), d32),
-      "port"
-    );
+    put("M2", "2", "Wing mark", destination(base.lat, base.lon, norm(wa - g), d32), "port");
   }
 
   if (fam === "trap") {
     const alpha = p.spinnaker ? 60 : 70;
     const reach = p.reachRatio * B;
-    const m2 = destination(
-      marks.M1.lat,
-      marks.M1.lon,
-      norm(wa + 180 + alpha),
-      reach
-    );
+    const m2 = destination(marks.M1.lat, marks.M1.lon, norm(wa + 180 + alpha), reach);
     put("M2", "2", "Reach mark", m2, "port");
     const g3c = destination(m2.lat, m2.lon, norm(wa + 180), B);
     gate("G3", g3c, 3);
   }
 
-  // --- Offset ------------------------------------------------------
-  if (p.offset && fam !== "triT") {
+  // --- Offset (1a) -----------------------------------------------------
+  // Orthogonal modifier, gated by the caller to courses the docs actually
+  // name an "A" variant for (see COURSES[...].offsetEligible / base.offset
+  // in the App component below).
+  if (p.offset && marks.M1) {
     put(
       "M1A",
       "1a",
       "Offset mark",
-      destination(
-        marks.M1.lat,
-        marks.M1.lon,
-        norm(wa - p.offsetAngle),
-        p.offsetDist / M_PER_NM
-      ),
+      destination(marks.M1.lat, marks.M1.lon, norm(wa - p.offsetAngle), p.offsetDist / M_PER_NM),
       "port"
     );
   }
 
-  // --- Finish ------------------------------------------------------
-  const sig = p.signal;
-  let finCtr;
-  if (sig === "W" || sig === "TW") {
-    finCtr = destination(marks.M1.lat, marks.M1.lon, wa, p.startOffset);
-    put(
-      "FS",
-      "FS",
-      "Finish, signal end",
-      destination(finCtr.lat, finCtr.lon, norm(wa + 90), lineNm / 4),
-      "stbd"
-    );
-    put(
-      "FP",
-      "FP",
-      "Finish, pin end",
-      destination(finCtr.lat, finCtr.lon, norm(wa - 90), lineNm / 4),
-      "port"
-    );
-    marks.FINISH = { id: "FINISH", virtual: true, ...finCtr };
-  } else if (fam === "trap") {
-    finCtr = destination(marks.G3.lat, marks.G3.lon, norm(wa + 180), p.startOffset);
-    put(
-      "FS",
-      "FS",
-      "Finish, signal end",
-      destination(finCtr.lat, finCtr.lon, norm(wa + 90), lineNm / 4),
-      "stbd"
-    );
-    put(
-      "FP",
-      "FP",
-      "Finish, pin end",
-      destination(finCtr.lat, finCtr.lon, norm(wa - 90), lineNm / 4),
-      "port"
-    );
-    marks.FINISH = { id: "FINISH", virtual: true, ...finCtr };
-  } else {
-    marks.FINISH = { id: "FINISH", virtual: true, ...lineCtr };
+  // --- Finish-approach mark 5 (trapezoid beat-to-finish variants) ------
+  // trapezoid.md: "5 | Finish approach mark | Port | Below gate 3 | IW/OW
+  // only." The source text doesn't give a hard distance for either leg, so
+  // both hops reuse startOffset — the same "short final approach" distance
+  // already used for the start line and the plain windward finish.
+  if (cfg.finish === "trapWindward") {
+    put("M5", "5", "Finish approach mark", destination(marks.G3.lat, marks.G3.lon, wa, p.startOffset), "port");
   }
-  marks.START = { id: "START", virtual: true, ...lineCtr };
+
+  // --- Slalom marks (board / foiling finishes) --------------------------
+  if (cfg.finish === "slalomGate" || cfg.finish === "slalomTrap") {
+    // The source docs give only qualitative distances here ("roughly two
+    // minutes total", "15-20 degrees between marks", "100 degrees off the
+    // wind from gate to S1") with no hard numbers, so leg length and angle
+    // step are exposed as adjustable inputs rather than guessed constants.
+    const startMark = cfg.finish === "slalomTrap" ? marks.G3p : marks.G4p;
+    let cur = startMark;
+    const meanBrg = norm(wa + 100);
+    for (let i = 1; i <= 3; i++) {
+      const brg = norm(meanBrg + (i % 2 === 0 ? 1 : -1) * (p.slalomAngleStep / 2));
+      cur = destination(cur.lat, cur.lon, brg, p.slalomLegDist / M_PER_NM);
+      put(`S${i}`, `S${i}`, "Slalom mark", cur, i % 2 ? "port" : "stbd");
+    }
+  }
+
+  // --- Finish ------------------------------------------------------------
+  // Places a finish a short distance from a given mark, back toward the
+  // general vicinity of the start line — the default shape of a "reach to
+  // the finish" ending, used for every reach/slalom/IOD finish below.
+  const finishNear = (m, distNm) => destination(m.lat, m.lon, inverse(m, lineCtr).bearing, distNm);
+  const finishLine = (center, faceBrg) => {
+    put("FS", "FS", "Finish, signal end", destination(center.lat, center.lon, norm(faceBrg + 90), lineNm / 4), "stbd");
+    put("FP", "FP", "Finish, pin end", destination(center.lat, center.lon, norm(faceBrg - 90), lineNm / 4), "port");
+    marks.FINISH = { id: "FINISH", label: "Finish", virtual: true, ...center };
+  };
+
+  switch (cfg.finish) {
+    case "windward":
+      finishLine(destination(marks.M1.lat, marks.M1.lon, wa, p.startOffset), wa);
+      break;
+    case "trapFinish":
+      finishLine(destination(marks.G3.lat, marks.G3.lon, norm(wa + 180), p.startOffset), wa);
+      break;
+    case "trapWindward":
+      finishLine(destination(marks.M5.lat, marks.M5.lon, wa, p.startOffset), wa);
+      break;
+    case "reachGate":
+      finishLine(finishNear(cfg.finishSide === "s" ? marks.G4s : marks.G4p, p.finishApproachDist), wa);
+      break;
+    case "reachGate1":
+      finishLine(finishNear(cfg.finishSide === "s" ? marks.G1s : marks.G1p, p.finishApproachDist), wa);
+      break;
+    case "reachWing":
+      finishLine(finishNear(marks.M2, p.finishApproachDist), wa);
+      break;
+    case "slalomGate":
+    case "slalomTrap":
+      finishLine(finishNear(marks.S3, p.finishApproachDist), wa);
+      break;
+    case "iodFinish":
+      // "Approximately 50 m from mark 2, laid on the inside of the course."
+      finishLine(finishNear(marks.M2, 50 / M_PER_NM), wa);
+      break;
+    case "windwardOly":
+      // "Start at the leeward end. Finish on a beat, with the line either
+      // at mark 1 or set beyond it." Simplest of the two documented options.
+      finishLine(marks.M1, wa);
+      break;
+    default: // atStart — L, M, TL, T and their offset variants
+      marks.FINISH = { id: "FINISH", label: "Finish", virtual: true, ...lineCtr };
+  }
+  marks.START = { id: "START", label: "Start", virtual: true, ...lineCtr };
 
   // --- Legs, from the published rounding order ----------------------
-  const seq = (SEQUENCES[sig] && SEQUENCES[sig][p.beats]) || [];
+  const seq = (SEQUENCES[p.signal] && SEQUENCES[p.signal][p.beats]) || [];
   const expanded = [];
   seq.forEach((tok) => {
     expanded.push(tok);
@@ -491,7 +643,7 @@ function PlanView({ course, windAxis }) {
         const q = at(m);
         const fill =
           m.side === "port" ? "var(--port)" : m.side === "stbd" ? "var(--stbd)" : "var(--ink)";
-        const r = m.id === "M1A" ? 5 : 7;
+        const r = m.id === "M1A" || /^S[123]$/.test(m.id) ? 5 : 7;
         return (
           <g key={m.id}>
             <circle cx={q.x} cy={q.y} r={r} fill={fill} stroke="var(--panel)" strokeWidth="1.5" />
@@ -546,15 +698,20 @@ export default function CourseSetter() {
   const [offsetAngle, setOffsetAngle] = useState(90);
   const [reachRatio, setReachRatio] = useState(0.5);
   const [startOffset, setStartOffset] = useState(0.05);
+  const [finishApproachDist, setFinishApproachDist] = useState(0.08);
+  const [slalomLegDist, setSlalomLegDist] = useState(60);
+  const [slalomAngleStep, setSlalomAngleStep] = useState(18);
   const [copied, setCopied] = useState(false);
 
-  const beatsAllowed = SIGNALS[signal].beats;
+  const cfg = COURSES[signal];
+  const beatsAllowed = cfg.beats;
   const effBeats = beatsAllowed.includes(beats) ? beats : beatsAllowed[0];
+  const offsetActive = offset && !!cfg.offsetEligible;
 
   const base = {
-    sigLat, sigLon, windAxis, signal, beats: effBeats, offset, spinnaker,
+    sigLat, sigLon, windAxis, signal, beats: effBeats, offset: offsetActive, spinnaker,
     entries, meanLoa, lineFactor, bias, gateWidth, offsetDist, offsetAngle,
-    reachRatio, startOffset,
+    reachRatio, startOffset, finishApproachDist, slalomLegDist, slalomAngleStep,
     triAngles: { a: 45, b: 90, g: 45 },
   };
 
@@ -571,8 +728,9 @@ export default function CourseSetter() {
     }
     return (lo + hi) / 2;
   }, [useTarget, manualBeat, targetMin, speed, signal, effBeats, windAxis,
-      entries, meanLoa, lineFactor, bias, gateWidth, offset, offsetDist,
-      offsetAngle, spinnaker, reachRatio, startOffset, sigLat, sigLon]);
+      entries, meanLoa, lineFactor, bias, gateWidth, offsetActive, offsetDist,
+      offsetAngle, spinnaker, reachRatio, startOffset, finishApproachDist,
+      slalomLegDist, slalomAngleStep, sigLat, sigLon]);
 
   const course = useMemo(() => computeCourse({ ...base, beat }), [base, beat]);
   const stats = windStats(obs);
@@ -589,13 +747,14 @@ export default function CourseSetter() {
   );
 
   const dispBrg = (b) => norm(showMag ? b - variation : b);
+  const dispSignal = `${signal}${offsetActive ? "A" : ""}${cfg.noDigit ? "" : effBeats}`;
 
   const getGps = useCallback(() => {
     if (!navigator.geolocation) {
       setGpsMsg("This browser has no location service. Enter the position by hand.");
       return;
     }
-    setGpsMsg("Reading position\u2026");
+    setGpsMsg("Reading position…");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setSigLat(+pos.coords.latitude.toFixed(6));
@@ -618,7 +777,7 @@ export default function CourseSetter() {
     })
     .join("\n");
 
-  const header = `${signal}${effBeats}  ${SIGNALS[signal].name}\nWind axis ${String(
+  const header = `${dispSignal}  ${cfg.name}\nWind axis ${String(
     Math.round(dispBrg(windAxis))
   ).padStart(3, "0")}${showMag ? "M" : "T"}   Beat ${beat.toFixed(2)} nm   Course ${course.total.toFixed(
     2
@@ -634,13 +793,13 @@ export default function CourseSetter() {
   const warnings = [];
   if (stats && stats.spread > 15)
     warnings.push(
-      `Wind has swung ${Math.round(stats.spread)}\u00b0 across your readings. ${
-        SIGNALS[signal].family === "trap"
-          ? "A trapezoid will not stay square \u2014 consider a windward/leeward."
+      `Wind has swung ${Math.round(stats.spread)}° across your readings. ${
+        cfg.family === "trap"
+          ? "A trapezoid will not stay square — consider a windward/leeward."
           : "Expect to move the windward mark."
       }`
     );
-  if (SIGNALS[signal].family === "trap" && !spinnaker && reachRatio === 0.5)
+  if (cfg.family === "trap" && !spinnaker && reachRatio === 0.5)
     warnings.push(
       "Non-spinnaker fleet on a half-beat reach. Check the first reach does not become a fetch."
     );
@@ -648,6 +807,9 @@ export default function CourseSetter() {
     warnings.push("Beat is very short. Raise the target time or check the class speed.");
   if (fix && fix.acc > 10)
     warnings.push(`Position fix is only accurate to ${Math.round(fix.acc)} m.`);
+
+  const showFinishDist = ["reachGate", "reachGate1", "reachWing", "slalomGate", "slalomTrap"].includes(cfg.finish);
+  const showSlalom = cfg.finish === "slalomGate" || cfg.finish === "slalomTrap";
 
   return (
     <div className="app">
@@ -726,7 +888,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
       </div>
 
       <div className="readout">
-        <div><span>course</span><strong>{signal}{effBeats}</strong></div>
+        <div><span>course</span><strong>{dispSignal}</strong></div>
         <div><span>beat</span><strong>{beat.toFixed(2)} nm</strong></div>
         <div><span>total</span><strong>{course.total.toFixed(2)} nm</strong></div>
         <div><span>estimated</span><strong>{Math.round(est)} min</strong></div>
@@ -814,28 +976,40 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
             <h2>Course</h2>
             <select className="wide" value={signal} aria-label="Course type"
                     onChange={(e) => {
-                      setSignal(e.target.value);
-                      const b = SIGNALS[e.target.value].beats;
+                      const ns = e.target.value;
+                      setSignal(ns);
+                      const b = COURSES[ns].beats;
                       if (!b.includes(beats)) setBeats(b[0]);
                     }}>
-              {Object.entries(SIGNALS).map(([k, v]) => (
-                <option key={k} value={k}>{k} — {v.name}</option>
+              {COURSE_GROUPS.map((grp) => (
+                <optgroup key={grp} label={grp}>
+                  {Object.entries(COURSES)
+                    .filter(([, v]) => v.group === grp)
+                    .map(([k, v]) => (
+                      <option key={k} value={k}>{k} — {v.name}</option>
+                    ))}
+                </optgroup>
               ))}
             </select>
-            <div className="row" style={{ marginTop: 10 }}>
-              <label>Beats</label>
-              <div className="seg" style={{ flex: 1, maxWidth: 160 }}>
-                {beatsAllowed.map((b) => (
-                  <button key={b} data-on={b === effBeats} onClick={() => setBeats(b)}>{b}</button>
-                ))}
+            {cfg.note && <p className="note">{cfg.note}</p>}
+            {beatsAllowed.length > 1 && (
+              <div className="row" style={{ marginTop: 10 }}>
+                <label>Beats</label>
+                <div className="seg" style={{ flex: 1, maxWidth: 160 }}>
+                  {beatsAllowed.map((b) => (
+                    <button key={b} data-on={b === effBeats} onClick={() => setBeats(b)}>{b}</button>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="row">
-              <label htmlFor="off">Offset mark 1a</label>
-              <input id="off" type="checkbox" checked={offset} style={{ width: "auto" }}
-                     onChange={(e) => setOffset(e.target.checked)} />
-            </div>
-            {SIGNALS[signal].family === "trap" && (
+            )}
+            {cfg.offsetEligible && (
+              <div className="row">
+                <label htmlFor="off">Offset mark 1a</label>
+                <input id="off" type="checkbox" checked={offset} style={{ width: "auto" }}
+                       onChange={(e) => setOffset(e.target.checked)} />
+              </div>
+            )}
+            {cfg.family === "trap" && (
               <>
                 <div className="row">
                   <label htmlFor="spin">Fleet flies spinnakers</label>
@@ -938,7 +1112,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
               <input id="so" type="number" step="0.01" value={startOffset}
                      onChange={(e) => setStartOffset(+e.target.value)} />
             </div>
-            {offset && (
+            {offsetActive && (
               <>
                 <div className="row">
                   <label htmlFor="od">Offset distance, m</label>
@@ -950,6 +1124,31 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                   <input id="oa" type="number" value={offsetAngle}
                          onChange={(e) => setOffsetAngle(+e.target.value)} />
                 </div>
+              </>
+            )}
+            {showFinishDist && (
+              <div className="row">
+                <label htmlFor="fad">Finish distance from last mark, nm</label>
+                <input id="fad" type="number" step="0.01" value={finishApproachDist}
+                       onChange={(e) => setFinishApproachDist(+e.target.value)} />
+              </div>
+            )}
+            {showSlalom && (
+              <>
+                <div className="row">
+                  <label htmlFor="sld">Slalom leg length, m</label>
+                  <input id="sld" type="number" value={slalomLegDist}
+                         onChange={(e) => setSlalomLegDist(+e.target.value)} />
+                </div>
+                <div className="row">
+                  <label htmlFor="sas">Slalom angle between marks, deg</label>
+                  <input id="sas" type="number" value={slalomAngleStep}
+                         onChange={(e) => setSlalomAngleStep(+e.target.value)} />
+                </div>
+                <p className="note">
+                  Exact slalom distances aren't standardized in the source material —
+                  adjust to match class practice.
+                </p>
               </>
             )}
           </div>
@@ -1002,12 +1201,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
               <span className="tiny">for the sailing instructions</span>
             </h2>
             <p className="mono" style={{ fontSize: 14, margin: "2px 0 0" }}>
-              {course.seq
-                .map((t) => ({
-                  START: "Start", FINISH: "Finish", M1: "1", M1A: "1a", M2: "2",
-                  G3: SIGNALS[signal].family === "triT" ? "3" : "3s/3p", G4: "4s/4p",
-                }[t] || t))
-                .join(" \u2013 ")}
+              {course.seq.map((t) => (course.marks[t] && course.marks[t].label) || t).join(" – ")}
             </p>
           </div>
 
