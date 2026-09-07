@@ -588,7 +588,7 @@ function layingOrder(marks, from) {
 // SVG renderer sets stroke/fill as SVG presentation attributes rather than
 // inline `style`, so var(--x) doesn't resolve there — these need to be
 // literal values.
-const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C" };
+const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8" };
 
 const LEG_STYLE = {
   beat: { weight: 3, dashArray: null },
@@ -621,9 +621,16 @@ const tetIcon = L.divIcon({
   iconAnchor: [10, 9],
 });
 
+// A plain overhead hull silhouette — pointed bow, flat transom — rather
+// than a side-view boat glyph, since everything else on the map is drawn
+// in plan view too.
 const rcBoatIcon = L.divIcon({
   className: "rc-boat-icon",
-  html: `<div class="rc-boat-hull">&#9972;</div><div class="rc-boat-tag">RC</div>`,
+  html: `<svg class="rc-boat-hull" width="24" height="36" viewBox="0 0 24 36">
+      <path d="M12,1 Q20,10 20,16 L18,32 L6,32 L4,16 Q4,10 12,1 Z"
+            fill="${MAP_COLORS.rc}" stroke="${MAP_COLORS.ink}" stroke-width="1.6" stroke-linejoin="round"/>
+    </svg>
+    <div class="rc-boat-tag">RC</div>`,
   iconSize: [40, 42],
   iconAnchor: [20, 34],
 });
@@ -1045,7 +1052,7 @@ button:hover{opacity:.85}
 .app .map-wind-arrow{display:inline-block;font-size:18px;line-height:1;transition:transform .2s}
 .app .rc-boat-icon{display:flex;flex-direction:column;align-items:center;cursor:grab}
 .app .rc-boat-icon:active{cursor:grabbing}
-.app .rc-boat-hull{font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+.app .rc-boat-hull{display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
 .app .rc-boat-tag{margin-top:-3px;background:var(--ink);color:var(--panel);
   font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;
   padding:1px 5px;border:1px solid var(--panel)}
