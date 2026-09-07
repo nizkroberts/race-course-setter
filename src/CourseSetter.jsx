@@ -1,4 +1,6 @@
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 /* ============================================================
    GEODESY
@@ -579,111 +581,176 @@ function layingOrder(marks, from) {
 }
 
 /* ============================================================
-   PLAN VIEW
+   MAP VIEW — course overlaid on a live OpenStreetMap map (Leaflet)
    ============================================================ */
 
-function PlanView({ course, windAxis }) {
-  const { marks, legs, ref } = course;
-  const pts = Object.values(marks).filter((m) => !m.virtual);
-  if (!pts.length) return null;
+// Mirrors the CSS custom properties in .app's <style> block below. Leaflet's
+// SVG renderer sets stroke/fill as SVG presentation attributes rather than
+// inline `style`, so var(--x) doesn't resolve there — these need to be
+// literal values.
+const MAP_COLORS = { ink: "#0E2129", port: "#B4342A", stbd: "#14704A", panel: "#F5F7F6" };
 
-  const proj = (m) => {
-    const { bearing, dist } = inverse(ref, m);
-    const th = rad(bearing - windAxis);
-    return { x: dist * Math.sin(th), y: -dist * Math.cos(th) };
-  };
+const LEG_STYLE = {
+  beat: { weight: 3, dashArray: null },
+  run: { weight: 2.2, dashArray: "9 7" },
+  reach: { weight: 2.2, dashArray: "2 6" },
+};
 
-  const P = pts.map((m) => ({ ...m, ...proj(m) }));
-  const xs = P.map((p) => p.x),
-    ys = P.map((p) => p.y);
-  const pad = 0.12;
-  const minX = Math.min(...xs) - pad,
-    maxX = Math.max(...xs) + pad;
-  const minY = Math.min(...ys) - pad,
-    maxY = Math.max(...ys) + pad;
-  const W = 620,
-    H = 640;
-  const span = Math.max(maxX - minX, ((maxY - minY) * W) / H);
-  const spanY = (span * H) / W;
-  const cx = (minX + maxX) / 2,
-    cy = (minY + maxY) / 2;
-  const sx = (x) => ((x - (cx - span / 2)) / span) * W;
-  const sy = (y) => ((y - (cy - spanY / 2)) / spanY) * H;
+function MapView({ course, windAxis, sigLat, sigLon }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const layerRef = useRef(null);
+  const firstFitRef = useRef(false);
+  const windArrowRef = useRef(null);
+  const windDegRef = useRef(null);
 
-  const at = (m) => {
-    const q = proj(m);
-    return { x: sx(q.x), y: sy(q.y) };
-  };
+  // Create the map once and never again — recreating it on every course
+  // change would reset pan/zoom out from under an RO who's just nudged a
+  // number field. Layers are drawn/redrawn in the effect below instead.
+  useEffect(() => {
+    const el = containerRef.current;
+    // Defensive against React StrictMode's dev-only double invoke
+    // (mount -> cleanup -> mount on the same DOM node): skip if this
+    // container still thinks it's an active Leaflet map.
+    if (!el || el._leaflet_id) return undefined;
 
-  const legStyle = {
-    beat: { stroke: "var(--ink)", width: 2.2, dash: "none" },
-    run: { stroke: "var(--ink)", width: 1.6, dash: "7 5" },
-    reach: { stroke: "var(--ink)", width: 1.6, dash: "2 4" },
-  };
+    const map = L.map(el, { attributionControl: true, zoomControl: true }).setView(
+      [sigLat, sigLon],
+      14
+    );
 
-  // Scale bar
-  const barNm = span > 2 ? 0.5 : span > 0.8 ? 0.2 : 0.1;
-  const barPx = (barNm / span) * W;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
 
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="plan" role="img"
-         aria-label="Plan view of the computed course">
-      <defs>
-        <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3"
-                orient="auto">
-          <path d="M0,0 L7,3 L0,6 z" fill="var(--ink)" />
-        </marker>
-      </defs>
+    L.control.scale({ metric: true, imperial: false, maxWidth: 150 }).addTo(map);
 
-      {/* wind */}
-      <g className="wind">
-        <line x1="46" y1="24" x2="46" y2="74" markerEnd="url(#arw)" />
-        <text x="60" y="42">wind</text>
-        <text x="60" y="60" className="mono">{String(Math.round(windAxis)).padStart(3, "0")}&deg;</text>
-      </g>
+    const centerCtl = L.control({ position: "topright" });
+    centerCtl.onAdd = () => {
+      const btn = L.DomUtil.create("button", "leaflet-control map-center-ctl");
+      btn.type = "button";
+      btn.textContent = "Center on course";
+      L.DomEvent.disableClickPropagation(btn);
+      btn.addEventListener("click", () => {
+        const group = layerRef.current;
+        if (group && group.getLayers().length) {
+          map.fitBounds(group.getBounds(), { padding: [30, 30] });
+        }
+      });
+      return btn;
+    };
+    centerCtl.addTo(map);
 
-      {legs.map((l, i) => {
-        const a = at(l.from),
-          b = at(l.to);
-        const s = legStyle[l.type];
-        return (
-          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke={s.stroke} strokeWidth={s.width}
-                strokeDasharray={s.dash === "none" ? undefined : s.dash}
-                opacity="0.5" strokeLinecap="round" />
-        );
-      })}
+    const windCtl = L.control({ position: "topleft" });
+    windCtl.onAdd = () => {
+      const div = L.DomUtil.create("div", "leaflet-control map-wind-ctl");
+      div.innerHTML = `<span class="map-wind-arrow">&#8593;</span><span class="map-wind-deg"></span>`;
+      L.DomEvent.disableClickPropagation(div);
+      windArrowRef.current = div.querySelector(".map-wind-arrow");
+      windDegRef.current = div.querySelector(".map-wind-deg");
+      return div;
+    };
+    windCtl.addTo(map);
 
-      {/* start / finish lines drawn heavier */}
-      {[["SS", "SP"], ["FS", "FP"]].map(([a, b], i) =>
-        marks[a] && marks[b] ? (
-          <line key={i} x1={at(marks[a]).x} y1={at(marks[a]).y}
-                x2={at(marks[b]).x} y2={at(marks[b]).y}
-                stroke="var(--ink)" strokeWidth="3" opacity="0.85" />
-        ) : null
-      )}
+    layerRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
 
-      {P.map((m) => {
-        const q = at(m);
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      map.remove();
+      mapRef.current = null;
+      layerRef.current = null;
+    };
+    // Intentionally mount-once: sigLat/sigLon only seed the initial view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Redraw marks and legs whenever the computed course changes. Doesn't
+  // touch the current pan/zoom, except to fit bounds around the course the
+  // first time marks exist.
+  useEffect(() => {
+    const map = mapRef.current;
+    const group = layerRef.current;
+    if (!map || !group) return;
+    group.clearLayers();
+
+    const { marks, legs } = course;
+
+    legs.forEach((l) => {
+      const s = LEG_STYLE[l.type];
+      L.polyline(
+        [
+          [l.from.lat, l.from.lon],
+          [l.to.lat, l.to.lon],
+        ],
+        { color: MAP_COLORS.ink, weight: s.weight, dashArray: s.dashArray, opacity: 0.6 }
+      ).addTo(group);
+    });
+
+    // Start / finish lines drawn heavier.
+    [
+      ["SS", "SP"],
+      ["FS", "FP"],
+    ].forEach(([a, b]) => {
+      if (marks[a] && marks[b]) {
+        L.polyline(
+          [
+            [marks[a].lat, marks[a].lon],
+            [marks[b].lat, marks[b].lon],
+          ],
+          { color: MAP_COLORS.ink, weight: 4, opacity: 0.85 }
+        ).addTo(group);
+      }
+    });
+
+    Object.values(marks)
+      .filter((m) => !m.virtual)
+      .forEach((m) => {
         const fill =
-          m.side === "port" ? "var(--port)" : m.side === "stbd" ? "var(--stbd)" : "var(--ink)";
+          m.side === "port" ? MAP_COLORS.port : m.side === "stbd" ? MAP_COLORS.stbd : MAP_COLORS.ink;
         const r = m.id === "M1A" || /^S[123]$/.test(m.id) ? 5 : 7;
-        return (
-          <g key={m.id}>
-            <circle cx={q.x} cy={q.y} r={r} fill={fill} stroke="var(--panel)" strokeWidth="1.5" />
-            <text x={q.x + 12} y={q.y + 5} className="mlabel">{m.label}</text>
-          </g>
-        );
-      })}
+        L.circleMarker([m.lat, m.lon], {
+          radius: r,
+          color: MAP_COLORS.panel,
+          weight: 1.5,
+          fillColor: fill,
+          fillOpacity: 1,
+        })
+          .bindTooltip(m.label, {
+            permanent: true,
+            direction: "right",
+            offset: [8, 0],
+            className: "mlabel-tip",
+          })
+          .addTo(group);
+      });
 
-      <g className="scale">
-        <line x1="46" y1={H - 34} x2={46 + barPx} y2={H - 34} />
-        <line x1="46" y1={H - 39} x2="46" y2={H - 29} />
-        <line x1={46 + barPx} y1={H - 39} x2={46 + barPx} y2={H - 29} />
-        <text x="46" y={H - 44} className="mono">{barNm} nm</text>
-      </g>
-    </svg>
-  );
+    if (!firstFitRef.current) {
+      const b = group.getBounds();
+      if (b.isValid()) {
+        map.fitBounds(b, { padding: [30, 30] });
+        firstFitRef.current = true;
+      }
+    }
+  }, [course]);
+
+  // Wind indicator: arrow points the direction the wind is blowing toward
+  // (windAxis + 180); the label states the axis itself (blowing FROM) so
+  // there's no ambiguity about which convention is shown.
+  useEffect(() => {
+    const arrow = windArrowRef.current;
+    const label = windDegRef.current;
+    if (!arrow || !label) return;
+    arrow.style.transform = `rotate(${norm(windAxis + 180)}deg)`;
+    label.textContent = `wind from ${String(Math.round(windAxis)).padStart(3, "0")}°`;
+  }, [windAxis]);
+
+  return <div ref={containerRef} className="mapwrap" role="img" aria-label="Course overlaid on a map" />;
 }
 
 /* ============================================================
@@ -891,12 +958,21 @@ button:hover{opacity:.85}
   color:var(--panel);margin-bottom:12px}
 .readout div span{display:block;font-size:12px;color:#9BB0B6;letter-spacing:.04em}
 .readout div strong{font-size:21px;font-weight:500;font-family:'IBM Plex Mono',monospace}
-.plan{width:100%;height:auto;background:var(--panel);border:1px solid var(--rule);display:block}
-.plan .wind line{stroke:var(--ink);stroke-width:2}
-.plan .wind text{font-family:'Barlow Semi Condensed',sans-serif;font-size:14px;fill:var(--muted)}
-.plan .mlabel{font-family:'IBM Plex Mono',monospace;font-size:13px;fill:var(--ink);font-weight:500}
-.plan .scale line{stroke:var(--muted);stroke-width:1.5}
-.plan .scale text{font-size:12px;fill:var(--muted)}
+.mapwrap{width:100%;height:520px;display:block;background:var(--panel)}
+.app .leaflet-tooltip.mlabel-tip{background:transparent;border:none;box-shadow:none;
+  padding:0 0 0 2px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink);
+  font-weight:500;white-space:nowrap}
+.app .leaflet-tooltip.mlabel-tip::before{display:none}
+.app .map-center-ctl{font-family:'Barlow Semi Condensed',sans-serif;font-size:13px;
+  padding:6px 10px;background:var(--ink);color:var(--panel);border:1px solid var(--ink);
+  cursor:pointer;border-radius:0;margin:10px 10px 0 0}
+.app .map-center-ctl:hover{opacity:.85}
+.app .map-wind-ctl{background:rgba(245,247,246,.92);border:1px solid var(--ink);
+  padding:6px 10px;margin:10px 0 0 10px;display:flex;align-items:center;gap:8px;
+  font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink)}
+.app .map-wind-arrow{display:inline-block;font-size:18px;line-height:1;transition:transform .2s}
+.app .leaflet-control-scale-line{background:rgba(245,247,246,.85);border-color:var(--ink);
+  color:var(--ink);font-family:'IBM Plex Mono',monospace}
 table{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px}
 th{text-align:left;font-weight:600;color:var(--muted);font-size:13px;
   border-bottom:1px solid var(--rule);padding:5px 6px}
@@ -1196,7 +1272,9 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
         </div>
 
         <div>
-          <PlanView course={course} windAxis={windAxis} />
+          <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+            <MapView course={course} windAxis={windAxis} sigLat={sigLat} sigLon={sigLon} />
+          </div>
 
           <div className="panel" style={{ marginTop: 12 }}>
             <h2>

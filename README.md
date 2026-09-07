@@ -2,7 +2,7 @@
 
 A tool for club race officers: turns a signal-boat GPS position, a wind reading, and a
 course-type selection (windward/leeward, triangle, or trapezoid) into actual lat/lon mark
-positions, a plan-view diagram, a laying order, and radio-callable positions.
+positions, a course overlaid on a live map, a laying order, and radio-callable positions.
 
 Recovered from an earlier Claude (Mac app) session and set up here as a normal Vite +
 React project for continued development.
@@ -10,7 +10,7 @@ React project for continued development.
 ## Structure
 
 - `src/CourseSetter.jsx` — the app (geodesy, course geometry, wind stats, target-time
-  solver, plan view, and UI)
+  solver, live map view, and UI)
 - `docs/courses/` — reference documentation for every standard course family, one file
   per family, all conforming to `docs/courses/SCHEMA.md` (a spec for how the course
   files themselves are written — frontmatter fields, required sections in fixed order,
@@ -84,6 +84,21 @@ reach-finish placement for `LR`/`LG`/`WR`/`WG`/`TR`; the trapezoid beat-to-finis
 (the simplest construction consistent with the doc's own "equal reference distance"
 and "equal leg length" constraints) rather than reproducing its literal but internally
 inconsistent "60/120" wording.
+
+## Map view
+
+The course overlays on a live [Leaflet](https://leafletjs.com/) map using OpenStreetMap
+tiles — no API key or account needed. Google Maps and Apple MapKit JS were the other
+options considered; both need a key/token from an account you'd hold (a billed Google
+Cloud project, or a paid Apple Developer account with a signed JWT), so OSM was chosen
+to keep the app runnable with zero setup. Swapping the tile provider later just means
+changing the `L.tileLayer(...)` URL and attribution in `MapView` — the marker/leg
+drawing code doesn't care which tiles sit underneath it.
+
+The map is created once and never torn down on re-render, so panning/zooming survives
+every input tweak elsewhere in the app; marks and legs redraw in place, and the view
+only auto-fits to the course the first time (a "Center on course" button re-fits on
+demand after that).
 
 ## Development
 
