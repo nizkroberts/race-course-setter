@@ -1030,30 +1030,32 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat, overlayCo
           .addTo(group);
       });
 
-    // Laylines to the first windward mark, under the shifted wind: two
-    // single-tack-change routes, each leg coloured by which tack it's
-    // sailed on (matching the port/starboard convention used elsewhere in
-    // the app) and labelled with its length, so the two routes' total
-    // distances can be read straight off the map.
+    // Laylines to the first windward mark: just the two layline segments
+    // themselves, extending from the mark out to the point where a boat
+    // on the OTHER tack, sailing from the start, would reach them (the
+    // "one tack point" computeLaylines already resolves that at) — not
+    // the boat's own approach path from the start, which is a separate,
+    // heavier claim about how a boat actually gets there. Always drawn
+    // (not gated to the Wind Shift tab); coloured by which tack sails it,
+    // matching the port/starboard convention used elsewhere in the app.
     if (laylines) {
-      const drawLeg = (a, b, color, label) => {
+      const drawLayline = (mark, turn, color, label) => {
         L.polyline(
-          [[a.lat, a.lon], [b.lat, b.lon]],
+          [[mark.lat, mark.lon], [turn.lat, turn.lon]],
           { color, weight: 2.5, opacity: 0.85, dashArray: "6 4" }
         )
           .bindTooltip(label, { direction: "center" })
           .addTo(group);
       };
       const { starboardFirst: sf, portFirst: pf } = laylines;
-      drawLeg(sf.path[0], sf.path[1], MAP_COLORS.stbd, `Starboard tack — ${Math.round(sf.legs[0])} m`);
-      drawLeg(sf.path[1], sf.path[2], MAP_COLORS.port, `Port tack into the mark — ${Math.round(sf.legs[1])} m`);
-      drawLeg(pf.path[0], pf.path[1], MAP_COLORS.port, `Port tack — ${Math.round(pf.legs[0])} m`);
-      drawLeg(pf.path[1], pf.path[2], MAP_COLORS.stbd, `Starboard tack into the mark — ${Math.round(pf.legs[1])} m`);
+      const mark = sf.path[2]; // same mark 1 in both
+      drawLayline(mark, sf.path[1], MAP_COLORS.port, `Port layline — ${Math.round(sf.legs[1])} m`);
+      drawLayline(mark, pf.path[1], MAP_COLORS.stbd, `Starboard layline — ${Math.round(pf.legs[1])} m`);
       [sf.path[1], pf.path[1]].forEach((pt) => {
         L.circleMarker([pt.lat, pt.lon], {
           radius: 4, color: MAP_COLORS.ink, weight: 1, fillColor: MAP_COLORS.warn, fillOpacity: 1,
         })
-          .bindTooltip("Tack here", { direction: "top", offset: [0, -6] })
+          .bindTooltip("One-tack point from the start", { direction: "top", offset: [0, -6] })
           .addTo(group);
       });
     }
@@ -1517,13 +1519,18 @@ function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWind
           </div>
           <p className="note">
             Every boat is assumed to tack through {Math.round(tackAngle * 2)}&deg; total —
-            modifiable, since that varies by class. Against the actual, currently-laid
-            start line and mark 1 — not the ghost course above — this shows the two
-            single-tack routes to that real mark 1 <em>if the wind were to shift</em> to
-            the axis above: sail out on one tack to the other tack's layline, then tack
-            and sail straight in. Since the mark hasn't actually moved, the two tacks
-            come out uneven once the wind has genuinely shifted — that unevenness is the
-            point.
+            modifiable, since that varies by class, and it applies to the laylines drawn
+            on Course Design too — they're always on there, using the real wind axis;
+            turning this overlay on switches them to the axis below instead, so you can
+            see the same laylines react to a hypothetical shift.
+          </p>
+          <p className="note">
+            Against the actual, currently-laid start line and mark 1 — not the ghost
+            course above — this is the two laylines to that real mark 1 <em>if the wind
+            were to shift</em> to the axis below: each extends from the mark out to the
+            point where a boat on the other tack, sailing from the start, would just
+            reach it. Since the mark hasn't actually moved, the two come out uneven once
+            the wind has genuinely shifted — that unevenness is the point.
           </p>
           {!laylines && (
             <p className="note">
@@ -1746,13 +1753,16 @@ export default function CourseSetter() {
   // Laylines against the CURRENT course's actual mark 1 and start line —
   // not shiftedCourse, which re-lays mark 1 square to the new wind by
   // construction and would make every layline symmetric regardless of
-  // shift, defeating the point. Only the tack headings use the new wind;
-  // the marks this asks "how do I sail to them now" about are real, laid
-  // ones. Null for courses with no single M1 (the twin-gate windward
-  // family, WR/WG).
+  // shift, defeating the point. Always on (not gated to the Wind Shift
+  // tab): uses the real wind axis normally, and the hypothetical one only
+  // while that tab's overlay is actually turned on, so the same laylines
+  // you see on Course Design keep making sense whether or not you've ever
+  // opened Wind Shift. Null for courses with no single M1 (the twin-gate
+  // windward family, WR/WG).
+  const laylineAxis = windShiftOn ? shiftWindAxis : windAxis;
   const laylines = useMemo(
-    () => computeLaylines(course, shiftWindAxis, tackAngle),
-    [course, shiftWindAxis, tackAngle]
+    () => computeLaylines(course, laylineAxis, tackAngle),
+    [course, laylineAxis, tackAngle]
   );
   const stats = windStats(obs);
   const est = estimateMinutes(course.legs, speed);
@@ -2377,7 +2387,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
             <MapView course={course} windAxis={windAxis} sigLat={sigLat} sigLon={sigLon}
                      onMoveSignalBoat={handleMoveSignalBoat}
                      overlayCourse={windShiftOn ? shiftedCourse : null}
-                     laylines={windShiftOn ? laylines : null} />
+                     laylines={laylines} />
           </div>
 
           <div className="panel" style={{ marginTop: 12 }}>

@@ -254,14 +254,25 @@ not just a second set of positions to mentally diff against the first.
 
 ## Laylines to the first windward mark
 
-Also on the Wind Shift tab/overlay: `computeLaylines()` draws the two single-tack-change
-routes from the start line to mark 1 — sail out on one tack until crossing the *other*
-tack's layline through the mark, tack, sail that layline straight in — using an
-assumed, adjustable tacking angle (`tackAngle`, degrees off the wind per tack). Each leg
-is coloured by which tack it's sailed on (green/red, the same port/starboard convention
-the marks-table chips already use) and labelled with its length. Returns `null` for a
-course with no single windward mark to aim at (the twin-gate windward-family courses,
-`WR`/`WG`).
+Drawn on the Course Design map at all times (not gated to the Wind Shift tab) —
+`computeLaylines()` returns the two laylines through mark 1: each extends from the mark
+out to the "one tack" point, the point where a boat on the *other* tack, sailing from
+the start, would just reach it — using an assumed, adjustable tacking angle
+(`tackAngle`, degrees off the wind per tack, on the Wind Shift tab, since that's where
+"wind stuff" already lives even though the laylines themselves aren't confined there).
+The wind axis they're computed against is the real one normally; turning the Wind Shift
+overlay on switches both to the hypothetical axis instead, so the same laylines respond
+to it. Each is coloured by which tack sails it (green/red, the same port/starboard
+convention the marks-table chips already use) and labelled with its length. Returns
+`null` for a course with no single windward mark to aim at (the twin-gate
+windward-family courses, `WR`/`WG`).
+
+`computeLaylines()` itself still returns the full construction — each route's opening
+leg (start to the layline) and closing leg (layline to the mark) — since that's what the
+"one tack point" is defined against and what the Wind Shift tab's tack-distance summary
+still reads from; only the *map drawing* was simplified to just the two mark-to-turning-
+point segments, on request, once it became clear the start-to-turning-point opening legs
+weren't the useful part to actually look at on the map.
 
 **Laylines are computed against the CURRENT course's actual mark 1 and start line, not
 `shiftedCourse`** — only the tack headings use the new wind axis. This was a real bug in
