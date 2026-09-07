@@ -654,7 +654,9 @@ function MapView({ course, windAxis, sigLat, sigLon }) {
     };
     windCtl.addTo(map);
 
-    layerRef.current = L.layerGroup().addTo(map);
+    // featureGroup, not layerGroup — plain LayerGroup has no getBounds(),
+    // which both the "Center on course" button and the auto-fit below need.
+    layerRef.current = L.featureGroup().addTo(map);
     mapRef.current = map;
 
     const ro = new ResizeObserver(() => map.invalidateSize());
