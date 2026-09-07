@@ -153,6 +153,19 @@ Extending another course to this pattern is two steps:
    row logic (`showGateDist`, `showFinishDist`, `showSlalom`) all key off
    `COURSE_OPTIONS` and `getCourseParam()` generically.
 
+`I`/`O` (plain trapezoid, no offset/beat-to-finish/slalom variant) picked up **angle of
+reach** / **length of reach to finish** the same way — and needed a real fix alongside
+it, not just new options. Their `SEQUENCES` entries ended in the full gate `G3` (a
+pass-through), and `finish: "trapFinish"` placed the line square to the wind downwind of
+it — but the original `trapezoid.md` this app was built from documents `I2` as
+`Start – 1 – 4s/4p – 1 – 2 – 3p – Finish`: a *single* mark (`3p`, always left to port),
+because the leg to the finish is a reach, the same convention `IW`/`OW`/`IS`/`OS` already
+followed correctly. Fixed by changing the trailing token to `G3p` and switching
+`finish` to `reachGate` (the exact mechanism `LR` already uses, generalized in
+`computeCourse`'s `reachGate` case to pick gate `G3` for the trapezoid family instead of
+`G4`) — so `I`/`O` now share the same reach-finish machinery as `LR`, per the docs, not
+a bespoke one that had quietly drifted from them.
+
 **A bug this caught:** `gateDist` was only wired into the `wl`/`trap` branch of
 `computeCourse`'s reference-point calculation, not the separate `wlTwin` branch `WR`/`WG`
 use — so their own "distance to gate" option silently did nothing until a dedicated

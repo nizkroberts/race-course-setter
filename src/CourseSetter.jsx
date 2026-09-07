@@ -253,15 +253,19 @@ const SEQUENCES = {
   },
 
   // ---- trapezoid ----
+  // Final G3 is G3p (single mark), not the full gate — the doc's own I2
+  // rounding order is "Start – 1 – 4s/4p – 1 – 2 – 3p – Finish": the leg to
+  // the finish is a reach, so only the mark actually rounded is a mark of
+  // the course, same convention IW/OW/IS/OS already use below.
   I: {
-    2: ["START", "M1", "G4", "M1", "M2", "G3", "FINISH"],
-    3: ["START", "M1", "G4", "M1", "G4", "M1", "M2", "G3", "FINISH"],
-    4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "M1", "M2", "G3", "FINISH"],
+    2: ["START", "M1", "G4", "M1", "M2", "G3p", "FINISH"],
+    3: ["START", "M1", "G4", "M1", "G4", "M1", "M2", "G3p", "FINISH"],
+    4: ["START", "M1", "G4", "M1", "G4", "M1", "G4", "M1", "M2", "G3p", "FINISH"],
   },
   O: {
-    2: ["START", "M1", "M2", "G3", "M2", "G3", "FINISH"],
-    3: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3", "FINISH"],
-    4: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3", "M2", "G3", "FINISH"],
+    2: ["START", "M1", "M2", "G3", "M2", "G3p", "FINISH"],
+    3: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3p", "FINISH"],
+    4: ["START", "M1", "M2", "G3", "M2", "G3", "M2", "G3", "M2", "G3p", "FINISH"],
   },
   IW: {
     1: ["START", "M1", "M2", "G3p", "M5", "FINISH"],
@@ -326,8 +330,8 @@ const COURSES = {
   TL: { family: "tri", name: "Triangle, leeward finish", beats: [2, 3, 4], finish: "atStart", offsetEligible: true, group: "Triangle" },
   TR: { family: "tri", name: "Triangle, reaching finish", beats: [1, 2, 3], finish: "reachWing", offsetEligible: true, group: "Triangle" },
 
-  I: { family: "trap", name: "Trapezoid, inner loop", beats: [2, 3, 4], finish: "trapFinish", offsetEligible: true, group: "Trapezoid" },
-  O: { family: "trap", name: "Trapezoid, outer loop", beats: [2, 3, 4], finish: "trapFinish", group: "Trapezoid" },
+  I: { family: "trap", name: "Trapezoid, inner loop", beats: [2, 3, 4], finish: "reachGate", finishSide: "p", offsetEligible: true, group: "Trapezoid" },
+  O: { family: "trap", name: "Trapezoid, outer loop", beats: [2, 3, 4], finish: "reachGate", finishSide: "p", group: "Trapezoid" },
   IW: { family: "trap", name: "Trapezoid, inner loop, beat to finish", beats: [1, 2, 3, 4], finish: "trapWindward", offsetEligible: true, group: "Trapezoid" },
   OW: { family: "trap", name: "Trapezoid, outer loop, beat to finish", beats: [2, 3, 4], finish: "trapWindward", group: "Trapezoid" },
   IS: { family: "trap", name: "Trapezoid, inner loop, slalom finish", beats: [2, 3], finish: "slalomTrap", group: "Trapezoid", note: "Board and foiling classes." },
@@ -397,6 +401,14 @@ const COURSE_OPTIONS = {
     { key: "slalomLegDist", label: "Slalom leg length, m", type: "number", default: 60, step: 1 },
     { key: "slalomAngleStep", label: "Slalom angle between marks, deg", type: "number", default: 18, step: 1 },
   ],
+
+  // ---- trapezoid ----
+  // I/O both finish with a reach off the single port mark of gate 3 (the
+  // doc's own I2: "Start – 1 – 4s/4p – 1 – 2 – 3p – Finish" — only the mark
+  // actually rounded is a mark of the course), same reachGate mechanism LR
+  // already uses off gate 4 — see the reachGate case in computeCourse.
+  I: [...REACH_OPTS],
+  O: [...REACH_OPTS],
 };
 
 /** Resolved value of a per-course option: the stored value if the RO has
@@ -658,14 +670,15 @@ function computeCourse(p) {
       finishLine(destination(marks.M1.lat, marks.M1.lon, wa, dist), wa);
       break;
     }
-    case "trapFinish":
-      finishLine(destination(marks.G3.lat, marks.G3.lon, norm(wa + 180), p.startOffset), wa);
-      break;
     case "trapWindward":
       finishLine(destination(marks.M5.lat, marks.M5.lon, wa, p.startOffset), wa);
       break;
     case "reachGate": {
-      const gm = cfg.finishSide === "s" ? marks.G4s : marks.G4p;
+      // The relevant gate is G4 for windward-leeward-family courses
+      // (LR/LG), G3 for trapezoid-family ones (I/O) — same reach-finish
+      // mechanism, off whichever gate that family actually has.
+      const gatePrefix = fam === "trap" ? "G3" : "G4";
+      const gm = marks[`${gatePrefix}${cfg.finishSide === "s" ? "s" : "p"}`];
       reachFinishLine(gm, reachFinish(gm));
       break;
     }
