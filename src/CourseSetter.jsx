@@ -824,8 +824,8 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
    ============================================================ */
 
 export default function CourseSetter() {
-  const [sigLat, setSigLat] = useState(50.75);
-  const [sigLon, setSigLon] = useState(-1.25);
+  const [sigLat, setSigLat] = useState(44.462722); // 44°27'45.8"N
+  const [sigLon, setSigLon] = useState(-78.712556); // 78°42'45.2"W
   const [fix, setFix] = useState(null);
   const [gpsMsg, setGpsMsg] = useState("");
 
