@@ -76,6 +76,18 @@ function toDDM(lat, lon) {
   return { lat: f(lat, "N", "S", 2), lon: f(lon, "E", "W", 3) };
 }
 
+// Degrees-decimal-minutes ("W 078° 42.507'") is right for reading aloud
+// over VHF, but doesn't paste into Google (or Apple) Maps' search box —
+// both want plain decimal degrees, "lat,lon". This is that, plus the
+// maps.google.com deep link built from it, which sidesteps the paste/parse
+// step entirely for anyone with the app or a browser tab handy.
+function toDecimal(lat, lon, places = 6) {
+  return `${lat.toFixed(places)}, ${lon.toFixed(places)}`;
+}
+function googleMapsUrl(lat, lon) {
+  return `https://www.google.com/maps?q=${lat.toFixed(6)},${lon.toFixed(6)}`;
+}
+
 /* ============================================================
    LAYLINES — the two single-tack-change routes from the start to the
    first windward mark.
@@ -1271,6 +1283,13 @@ function MarkSetterTab({ course, dispBrg, showMag, sigLat, sigLon }) {
   const [boatFix, setBoatFix] = useState(null);
   const [gpsMsg, setGpsMsg] = useState("");
   const [autoCenter, setAutoCenter] = useState(true);
+  const [targetCopied, setTargetCopied] = useState(false);
+  const copyTargetCoords = (m) => {
+    const text = toDecimal(m.lat, m.lon);
+    if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+    setTargetCopied(true);
+    setTimeout(() => setTargetCopied(false), 1800);
+  };
   const watchIdRef = useRef(null);
 
   const settable = useMemo(
@@ -1391,6 +1410,15 @@ function MarkSetterTab({ course, dispBrg, showMag, sigLat, sigLon }) {
               </div>
               <div style={{ display: "flex", justifyContent: "center", margin: "6px 0 14px" }}>
                 <BearingCompass bearing={dispNavBrg} />
+              </div>
+              <div className="row">
+                <label>Target position</label>
+                <div className="mapsCell">
+                  <button className="ghost" onClick={() => copyTargetCoords(target)}>
+                    {targetCopied ? "Copied" : "Copy"}
+                  </button>
+                  <a href={googleMapsUrl(target.lat, target.lon)} target="_blank" rel="noreferrer">Open</a>
+                </div>
               </div>
               {withinTol ? (
                 <div className="warn" style={{ borderLeftColor: "var(--stbd)", background: "#E5F1EA", color: "#0F3A24" }}>
@@ -1688,6 +1716,13 @@ export default function CourseSetter() {
   const [slalomAngleStep, setSlalomAngleStep] = useState(18);
   const [courseParams, setCourseParams] = useState({});
   const [copied, setCopied] = useState(false);
+  const [copiedMarkId, setCopiedMarkId] = useState(null);
+  const copyMarkCoords = (m) => {
+    const text = toDecimal(m.lat, m.lon);
+    if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+    setCopiedMarkId(m.id);
+    setTimeout(() => setCopiedMarkId((cur) => (cur === m.id ? null : cur)), 1800);
+  };
 
   const cfg = COURSES[signal];
   const beatsAllowed = cfg.beats;
@@ -1995,6 +2030,9 @@ th{text-align:left;font-weight:600;color:var(--muted);font-size:13px;
   border-bottom:1px solid var(--rule);padding:5px 6px}
 td{padding:5px 6px;border-bottom:1px solid #E3E9E7;font-family:'IBM Plex Mono',monospace;font-size:13px}
 td.nm{font-family:'Barlow Semi Condensed',sans-serif;font-size:14.5px}
+.mapsCell{display:flex;gap:8px;align-items:center;white-space:nowrap}
+.mapsCell button{padding:3px 8px;font-size:12.5px}
+.mapsCell a{color:var(--deep);font-family:'Barlow Semi Condensed',sans-serif;font-size:13px}
 .chip{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;
   vertical-align:baseline}
 .warn{background:#F6EEDC;border-left:3px solid var(--warn);padding:8px 11px;
@@ -2399,7 +2437,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
               <thead>
                 <tr>
                   <th>#</th><th>Mark</th><th>Latitude</th><th>Longitude</th>
-                  <th>Brg</th><th>Dist</th>
+                  <th>Brg</th><th>Dist</th><th>Maps</th>
                 </tr>
               </thead>
               <tbody>
@@ -2417,6 +2455,12 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                       <td>{d.lat}</td><td>{d.lon}</td>
                       <td>{String(Math.round(dispBrg(inv.bearing))).padStart(3, "0")}&deg;</td>
                       <td>{inv.dist.toFixed(2)}</td>
+                      <td className="mapsCell">
+                        <button className="ghost" onClick={() => copyMarkCoords(m)}>
+                          {copiedMarkId === m.id ? "Copied" : "Copy"}
+                        </button>
+                        <a href={googleMapsUrl(m.lat, m.lon)} target="_blank" rel="noreferrer">Open</a>
+                      </td>
                     </tr>
                   );
                 })}
@@ -2425,6 +2469,12 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
             <p className="note">
               Mark 1a is laid last because it is positioned against the windward mark as
               actually laid, not as designed.
+            </p>
+            <p className="note">
+              "Copy" puts plain decimal degrees on the clipboard ({toDecimal(order[0]?.lat ?? 0, order[0]?.lon ?? 0)}
+              -style) — the format Google and Apple Maps' search boxes actually parse; the
+              degrees-decimal-minutes above reads correctly aloud over the radio but won't
+              paste into either app. "Open" launches Google Maps at that mark directly.
             </p>
           </div>
 

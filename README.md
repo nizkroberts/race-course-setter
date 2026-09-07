@@ -302,6 +302,18 @@ compared totals and would have always reported "0 m difference," caught before s
 by testing the actual numbers rather than assuming the first framing that seemed
 intuitive was the informative one.
 
+## Maps copy/paste
+
+Degrees-decimal-minutes ("W 078° 42.507'", `toDDM()`) is right for reading aloud over
+VHF, but Google and Apple Maps' search boxes both want plain decimal degrees
+(`toDecimal()`, "-78.708450") — pasting a DDM string into either doesn't work. The
+"Marks, in laying order" table (Course Design) and the Mark Setter tab's target readout
+both got a **Copy** button (puts decimal degrees on the clipboard) and an **Open**
+link (`googleMapsUrl()`, a `maps.google.com?q=lat,lon` deep link — opens the position
+directly, sidestepping the paste/parse step entirely for anyone with the app or a
+browser tab handy). The DDM display and the radio-text block are unchanged — that
+format is still correct for its actual purpose, reading a position aloud.
+
 ## Development
 
 ```
