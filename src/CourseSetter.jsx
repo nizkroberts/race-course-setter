@@ -529,11 +529,20 @@ function computeCourse(p) {
     const brg = norm(wa + (cfg.finishSide === "s" ? -1 : 1) * p.reachAngle);
     return destination(gm.lat, gm.lon, brg, p.reachLength);
   };
+  // The line is perpendicular to `faceBrg` (FS/FP sit at faceBrg +/- 90 from
+  // the centre) — for a windward or leeward finish that's the wind axis,
+  // because the boat arrives dead upwind or dead downwind. For every other
+  // finish the boat arrives on a reach, at whatever angle the approach leg
+  // actually is, so the line must be square to THAT leg, not to the wind —
+  // callers below pass the real from-mark-to-centre bearing for those.
   const finishLine = (center, faceBrg) => {
     put("FS", "FS", "Finish, signal end", destination(center.lat, center.lon, norm(faceBrg + 90), lineNm / 4), "stbd");
     put("FP", "FP", "Finish, pin end", destination(center.lat, center.lon, norm(faceBrg - 90), lineNm / 4), "port");
     marks.FINISH = { id: "FINISH", label: "Finish", virtual: true, ...center };
   };
+  // For a reach/slalom-style finish: place the centre, then square the line
+  // to the actual bearing of the leg arriving at it, not the wind axis.
+  const reachFinishLine = (approachFrom, center) => finishLine(center, inverse(approachFrom, center).bearing);
 
   switch (cfg.finish) {
     case "windward":
@@ -545,22 +554,29 @@ function computeCourse(p) {
     case "trapWindward":
       finishLine(destination(marks.M5.lat, marks.M5.lon, wa, p.startOffset), wa);
       break;
-    case "reachGate":
-      finishLine(reachFinish(cfg.finishSide === "s" ? marks.G4s : marks.G4p), wa);
+    case "reachGate": {
+      const gm = cfg.finishSide === "s" ? marks.G4s : marks.G4p;
+      reachFinishLine(gm, reachFinish(gm));
       break;
-    case "reachGate1":
-      finishLine(reachFinish(cfg.finishSide === "s" ? marks.G1s : marks.G1p), wa);
+    }
+    case "reachGate1": {
+      const gm = cfg.finishSide === "s" ? marks.G1s : marks.G1p;
+      reachFinishLine(gm, reachFinish(gm));
       break;
+    }
     case "reachWing":
-      finishLine(finishNear(marks.M2, p.finishApproachDist), wa);
+      reachFinishLine(marks.M2, finishNear(marks.M2, p.finishApproachDist));
       break;
     case "slalomGate":
     case "slalomTrap":
-      finishLine(finishNear(marks.S3, p.finishApproachDist), wa);
+      reachFinishLine(marks.S3, finishNear(marks.S3, p.finishApproachDist));
       break;
     case "iodFinish":
       // "Approximately 50 m from mark 2, laid on the inside of the course."
-      finishLine(finishNear(marks.M2, 50 / M_PER_NM), wa);
+      // Positioned relative to mark 2, but the boat actually arrives from
+      // gate 3 — Start-1-2-3s/3p-Finish — so the line is squared to THAT
+      // leg, not to a line drawn back to mark 2.
+      reachFinishLine(marks.G3, finishNear(marks.M2, 50 / M_PER_NM));
       break;
     case "windwardOly":
       // "Start at the leeward end. Finish on a beat, with the line either
