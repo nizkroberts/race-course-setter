@@ -698,7 +698,7 @@ function layingOrder(marks, from) {
 // SVG renderer sets stroke/fill as SVG presentation attributes rather than
 // inline `style`, so var(--x) doesn't resolve there — these need to be
 // literal values.
-const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8", muted: "#5C6E72" };
+const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8", muted: "#5C6E72", warn: "#8A5A08" };
 
 const LEG_STYLE = {
   beat: { weight: 3, dashArray: null },
@@ -750,10 +750,11 @@ const boatHullIcon = (color) =>
 const rcBoatIcon = boatHullIcon(MAP_COLORS.rc);
 const refBoatIcon = boatHullIcon(MAP_COLORS.muted);
 
-function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
+function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat, overlayCourse }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
+  const overlayLayerRef = useRef(null);
   const rcMarkerRef = useRef(null);
   const firstFitRef = useRef(false);
   const windArrowRef = useRef(null);
@@ -816,6 +817,11 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
     // featureGroup, not layerGroup — plain LayerGroup has no getBounds(),
     // which both the "Center on course" button and the auto-fit below need.
     layerRef.current = L.featureGroup().addTo(map);
+    // Separate group for the wind-shift overlay, so it redraws (and is
+    // cleared) independently of the main course, and — deliberately —
+    // never affects "Center on course" or the first-load auto-fit above:
+    // a ghost mark can land well outside the real course.
+    overlayLayerRef.current = L.featureGroup().addTo(map);
     mapRef.current = map;
 
     // RC boat: manually draggable, so it lives outside the course layer
@@ -844,6 +850,7 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
       map.remove();
       mapRef.current = null;
       layerRef.current = null;
+      overlayLayerRef.current = null;
       rcMarkerRef.current = null;
     };
     // Intentionally mount-once: sigLat/sigLon only seed the initial position.
@@ -926,6 +933,42 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
       }
     }
   }, [course]);
+
+  // Wind-shift overlay: a faded ghost of each mark at its position for a
+  // different wind axis, with a thin line back to where that mark actually
+  // is now — "how wrong" made visible as a displacement, not just a second
+  // set of positions to mentally diff against the first.
+  useEffect(() => {
+    const group = overlayLayerRef.current;
+    if (!group) return;
+    group.clearLayers();
+    if (!overlayCourse) return;
+
+    Object.values(overlayCourse.marks)
+      .filter((m) => !m.virtual && m.id !== "SS")
+      .forEach((m) => {
+        const orig = course.marks[m.id];
+        if (orig) {
+          L.polyline(
+            [[orig.lat, orig.lon], [m.lat, m.lon]],
+            { color: MAP_COLORS.warn, weight: 1.5, dashArray: "3 5", opacity: 0.8 }
+          ).addTo(group);
+        }
+        const distM = orig ? inverse(orig, m).dist * M_PER_NM : null;
+        const layer = isCircleMark(m)
+          ? L.circleMarker([m.lat, m.lon], {
+              radius: 6, color: MAP_COLORS.ink, weight: 1.2, opacity: 0.5,
+              fillColor: MAP_COLORS.mark, fillOpacity: 0.4,
+            })
+          : L.marker([m.lat, m.lon], { icon: tetIcon, opacity: 0.45 });
+        layer
+          .bindTooltip(
+            distM != null ? `${m.label} (shifted wind) — moves ${Math.round(distM)} m` : `${m.label} (shifted wind)`,
+            { direction: "left", offset: [-8, 0] }
+          )
+          .addTo(group);
+      });
+  }, [course, overlayCourse]);
 
   // Wind indicator: arrow points the direction the wind is blowing toward
   // (windAxis + 180); the label states the axis itself (blowing FROM) so
@@ -1279,11 +1322,151 @@ function MarkSetterTab({ course, dispBrg, showMag, sigLat, sigLon }) {
 }
 
 /* ============================================================
+   SAVED COURSES — durable, named snapshots of the design inputs
+   (not the computed marks — those are re-derived on load, the same way
+   the app always computes them, so a saved course stays correct even if
+   the geometry logic changes later).
+   ============================================================ */
+
+const SAVE_KEY = "course-setter:saved-courses";
+
+// Every design-tab input that determines the computed course. Deliberately
+// excludes session-only state (GPS fix details, live wind readings, the
+// "copied" flash, per-course option values keyed to a signal that's since
+// changed) — those aren't "the course as designed," they're this sitting's
+// scratch state.
+const SAVE_FIELDS = [
+  "sigLat", "sigLon", "windAxis", "variation", "showMag",
+  "signal", "beats", "offset", "spinnaker",
+  "useTarget", "targetMin", "windSpeed", "cls", "speed", "manualBeat",
+  "entries", "meanLoa", "lineFactor", "bias", "gateWidth", "offsetDist", "offsetAngle",
+  "reachRatio", "startOffset", "finishApproachDist", "slalomLegDist", "slalomAngleStep",
+  "courseParams",
+];
+
+function readSavedCourses() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedCourses(list) {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false; // storage disabled, full, or unavailable (private browsing, etc.)
+  }
+}
+
+function newSaveId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/* ============================================================
+   WIND SHIFT — "what if the wind moved" comparison against the current
+   design, without touching it. Config lives on its own tab; the visual
+   result (faded ghost marks) draws back on the Course Design map.
+   ============================================================ */
+
+function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWindAxis,
+                        windShiftOn, setWindShiftOn, course, shiftedCourse, dispBrg }) {
+  const rows = useMemo(() => {
+    if (!shiftedCourse) return [];
+    return Object.values(shiftedCourse.marks)
+      .filter((m) => !m.virtual && m.id !== "SS")
+      .map((m) => {
+        const orig = course.marks[m.id];
+        if (!orig) return null;
+        const nav = inverse(orig, m);
+        return { id: m.id, label: m.label, distM: nav.dist * M_PER_NM, brg: nav.bearing };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.distM - a.distM);
+  }, [shiftedCourse, course]);
+
+  return (
+    <div className="grid">
+      <div>
+        <div className="panel">
+          <h2>Hypothetical wind</h2>
+          <p className="note">
+            Current design uses {String(Math.round(dispBrg(windAxis))).padStart(3, "0")}
+            &deg;{showMag ? "M" : "T"}. This recomputes every mark for a different axis —
+            same course, beat length, and offset, wind only — without changing your
+            design, so you can see how far off each mark would be before deciding
+            whether to re-lay anything.
+          </p>
+          <div className="row">
+            <label htmlFor="swa">New wind axis, degrees the wind blows from</label>
+            <input id="swa" type="number" value={Math.round(dispBrg(shiftWindAxis))}
+                   onChange={(e) => onShiftWindAxis(norm(+e.target.value + (showMag ? variation : 0)))} />
+          </div>
+          <div className="row">
+            <label htmlFor="wson">Show overlay on Course Design map</label>
+            <input id="wson" type="checkbox" checked={windShiftOn} style={{ width: "auto" }}
+                   onChange={(e) => setWindShiftOn(e.target.checked)} />
+          </div>
+          <p className="note">
+            The overlay draws faded ghost marks at each new position, with a thin line
+            back to where that mark actually is now.
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <div className="panel">
+          <h2>How wrong each mark would be</h2>
+          {rows.length ? (
+            <table>
+              <thead>
+                <tr><th>Mark</th><th>Move</th><th>Direction</th></tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.label}</td>
+                    <td>{Math.round(r.distM)} m</td>
+                    <td>{String(Math.round(dispBrg(r.brg))).padStart(3, "0")}&deg;{showMag ? "M" : "T"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="note">No difference from the current wind axis yet — change the
+              value on the left to compare.</p>
+          )}
+          <p className="note">Sorted worst first — the marks a shift to this axis hurts most.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    APP
    ============================================================ */
 
 export default function CourseSetter() {
   const [tab, setTab] = useState("design");
+
+  const [savedCourses, setSavedCourses] = useState(() => readSavedCourses());
+  const [saveName, setSaveName] = useState("");
+  const [saveMsg, setSaveMsg] = useState("");
+
+  const [windShiftOn, setWindShiftOn] = useState(false);
+  const [shiftWindAxis, setShiftWindAxis] = useState(225);
+  const shiftTouchedRef = useRef(false);
+  const onShiftWindAxis = useCallback((v) => {
+    shiftTouchedRef.current = true;
+    setShiftWindAxis(v);
+  }, []);
+
   const [sigLat, setSigLat] = useState(44.462722); // 44°27'45.8"N
   const [sigLon, setSigLon] = useState(-78.712556); // 78°42'45.2"W
   const [fix, setFix] = useState(null);
@@ -1294,6 +1477,14 @@ export default function CourseSetter() {
   const [obsIn, setObsIn] = useState("");
   const [variation, setVariation] = useState(0);
   const [showMag, setShowMag] = useState(false);
+
+  // The hypothetical wind axis tracks the real one until the RO actually
+  // types a different value — otherwise opening the Wind Shift tab before
+  // ever touching it would compare against a stale default and claim
+  // every mark is badly wrong for no reason.
+  useEffect(() => {
+    if (!shiftTouchedRef.current) setShiftWindAxis(windAxis);
+  }, [windAxis]);
 
   const [signal, setSignal] = useState("L");
   const [beats, setBeats] = useState(3);
@@ -1385,6 +1576,13 @@ export default function CourseSetter() {
       slalomLegDist, slalomAngleStep, sigLat, sigLon, courseParams]);
 
   const course = useMemo(() => computeCourse({ ...base, beat }), [base, beat]);
+  // Same course, same beat, same everything — only the wind axis differs.
+  // Always computed (cheap) so the Wind Shift tab's table updates live;
+  // whether it's actually drawn on the map is windShiftOn, kept separate.
+  const shiftedCourse = useMemo(
+    () => computeCourse({ ...base, windAxis: shiftWindAxis, beat }),
+    [base, beat, shiftWindAxis]
+  );
   const stats = windStats(obs);
   const est = estimateMinutes(course.legs, speed);
 
@@ -1424,6 +1622,70 @@ export default function CourseSetter() {
     setSigLon(+lon.toFixed(6));
     setFix(null);
   }, []);
+
+  // Generic read/write for SAVE_FIELDS, so save/load/delete don't need a
+  // hand-maintained switch statement kept in sync with the field list.
+  const stateValues = {
+    sigLat, sigLon, windAxis, variation, showMag,
+    signal, beats, offset, spinnaker,
+    useTarget, targetMin, windSpeed, cls, speed, manualBeat,
+    entries, meanLoa, lineFactor, bias, gateWidth, offsetDist, offsetAngle,
+    reachRatio, startOffset, finishApproachDist, slalomLegDist, slalomAngleStep,
+    courseParams,
+  };
+  const stateSetters = {
+    sigLat: setSigLat, sigLon: setSigLon, windAxis: setWindAxis, variation: setVariation, showMag: setShowMag,
+    signal: setSignal, beats: setBeats, offset: setOffset, spinnaker: setSpinnaker,
+    useTarget: setUseTarget, targetMin: setTargetMin, windSpeed: setWindSpeed, cls: setCls, speed: setSpeed, manualBeat: setManualBeat,
+    entries: setEntries, meanLoa: setMeanLoa, lineFactor: setLineFactor, bias: setBias, gateWidth: setGateWidth,
+    offsetDist: setOffsetDist, offsetAngle: setOffsetAngle, reachRatio: setReachRatio, startOffset: setStartOffset,
+    finishApproachDist: setFinishApproachDist, slalomLegDist: setSlalomLegDist, slalomAngleStep: setSlalomAngleStep,
+    courseParams: setCourseParams,
+  };
+
+  const flashSaveMsg = (msg) => {
+    setSaveMsg(msg);
+    setTimeout(() => setSaveMsg(""), 3000);
+  };
+
+  const handleSaveCourse = () => {
+    const name = saveName.trim();
+    if (!name) {
+      flashSaveMsg("Type a name first.");
+      return;
+    }
+    const existing = savedCourses.find((c) => c.name === name);
+    if (existing && !window.confirm(`"${name}" already exists. Overwrite it?`)) return;
+    const snapshot = {};
+    SAVE_FIELDS.forEach((k) => (snapshot[k] = stateValues[k]));
+    const entry = { id: existing ? existing.id : newSaveId(), name, savedAt: Date.now(), state: snapshot };
+    const next = existing ? savedCourses.map((c) => (c.id === existing.id ? entry : c)) : [...savedCourses, entry];
+    if (writeSavedCourses(next)) {
+      setSavedCourses(next);
+      setSaveName("");
+      flashSaveMsg(`Saved "${name}".`);
+    } else {
+      flashSaveMsg("Couldn't save — this browser's storage may be full or disabled.");
+    }
+  };
+
+  const handleLoadCourse = (id) => {
+    const entry = savedCourses.find((c) => c.id === id);
+    if (!entry) return;
+    SAVE_FIELDS.forEach((k) => {
+      if (entry.state[k] !== undefined) stateSetters[k](entry.state[k]);
+    });
+    flashSaveMsg(`Loaded "${entry.name}".`);
+  };
+
+  const handleDeleteCourse = (id) => {
+    const entry = savedCourses.find((c) => c.id === id);
+    if (!entry) return;
+    if (!window.confirm(`Delete "${entry.name}"? This can't be undone.`)) return;
+    const next = savedCourses.filter((c) => c.id !== id);
+    writeSavedCourses(next);
+    setSavedCourses(next);
+  };
 
   const radioText = order
     .map((m, i) => {
@@ -1574,10 +1836,20 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
       <div className="tabs">
         <button data-on={tab === "design"} onClick={() => setTab("design")}>Course Design</button>
         <button data-on={tab === "setter"} onClick={() => setTab("setter")}>Mark Setter</button>
+        <button data-on={tab === "shift"} onClick={() => setTab("shift")}>Wind Shift</button>
       </div>
 
       {tab === "setter" && (
         <MarkSetterTab course={course} dispBrg={dispBrg} showMag={showMag} sigLat={sigLat} sigLon={sigLon} />
+      )}
+
+      {tab === "shift" && (
+        <WindShiftTab
+          windAxis={windAxis} variation={variation} showMag={showMag}
+          shiftWindAxis={shiftWindAxis} onShiftWindAxis={onShiftWindAxis}
+          windShiftOn={windShiftOn} setWindShiftOn={setWindShiftOn}
+          course={course} shiftedCourse={shiftedCourse} dispBrg={dispBrg}
+        />
       )}
 
       {tab === "design" && (
@@ -1594,6 +1866,46 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
 
       <div className="grid">
         <div>
+          <div className="panel">
+            <h2>Saved courses</h2>
+            <div className="row">
+              <label htmlFor="svname">Name</label>
+              <input id="svname" type="text" className="wide" value={saveName}
+                     placeholder="e.g. Tuesday night, NW breeze"
+                     onChange={(e) => setSaveName(e.target.value)} />
+            </div>
+            <button onClick={handleSaveCourse}>Save current design</button>
+            {saveMsg && <p className="note">{saveMsg}</p>}
+            {savedCourses.length > 0 ? (
+              <table style={{ marginTop: 10 }}>
+                <tbody>
+                  {savedCourses
+                    .slice()
+                    .sort((a, b) => b.savedAt - a.savedAt)
+                    .map((c) => (
+                      <tr key={c.id}>
+                        <td className="nm">{c.name}</td>
+                        <td className="tiny">{new Date(c.savedAt).toLocaleDateString()}</td>
+                        <td>
+                          <button className="ghost" onClick={() => handleLoadCourse(c.id)}>Load</button>
+                        </td>
+                        <td>
+                          <button className="ghost" onClick={() => handleDeleteCourse(c.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="note">
+                Nothing saved yet. Saves the design inputs — signal boat position, wind,
+                course, length settings — not the computed positions, so a saved course
+                still reflects any later improvements to how it's computed.
+              </p>
+            )}
+            <p className="note">Stored in this browser only — not synced anywhere.</p>
+          </div>
+
           <div className="panel">
             <h2>Signal boat</h2>
             <div className="row">
@@ -1891,7 +2203,8 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
         <div>
           <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
             <MapView course={course} windAxis={windAxis} sigLat={sigLat} sigLon={sigLon}
-                     onMoveSignalBoat={handleMoveSignalBoat} />
+                     onMoveSignalBoat={handleMoveSignalBoat}
+                     overlayCourse={windShiftOn ? shiftedCourse : null} />
           </div>
 
           <div className="panel" style={{ marginTop: 12 }}>

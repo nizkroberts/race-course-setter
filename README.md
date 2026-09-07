@@ -217,6 +217,41 @@ AS_LAID vs. DESIGNED mark dependency DAG from the functionality spec (§3, "the 
 dependency DAG"), still unbuilt. Every mark this tab points to is exactly where Course
 Design says it should be, not where an already-laid neighbor actually ended up.
 
+## Saved courses
+
+The "Saved courses" panel (top of Course Design) persists to `localStorage` — durable
+across reloads and restarts, private to this browser, no backend. `SAVE_FIELDS` lists
+every design INPUT that determines the computed course (signal boat position, wind,
+course signal/beats/offset, length settings, all per-course options) and is what
+actually gets saved — not the computed marks themselves, so a saved course still
+reflects any later improvements to how positions are computed, the same way today's
+courses do. Excluded deliberately: live/session-only state (GPS fix details, logged
+wind readings, the "copied" flash) that isn't "the course as designed." Save-by-name
+overwrites (confirmed) if the name already exists; load and delete are direct. Reading
+and writing both fail soft (try/catch around `localStorage`, `[]` on any parse error)
+rather than crash the app if storage is disabled, full, or unavailable (private
+browsing, some embedded contexts).
+
+## Wind shift overlay
+
+The Wind Shift tab computes a second course — same signal, beats, offset, beat length,
+everything except the wind axis — and shows how far off every mark would be without
+touching the actual design. The table there is always live (cheap to compute, so it
+updates as you type); a separate **"Show overlay on Course Design map"** checkbox
+controls whether it's also drawn there, since that's the view that gets busier. The new
+axis input tracks the real one until you actually type a different value — so opening
+the tab without touching anything shows "no difference," not a comparison against a
+stale default from whenever the app first loaded.
+
+On the map, the overlay is its own Leaflet layer group (`overlayLayerRef`), separate from
+the main course's — it's cleared and redrawn independently, and deliberately excluded
+from both "Center on course" and the first-load auto-fit, since a ghost mark can land
+well outside the real course and shouldn't be able to zoom the view out to include it.
+Each ghost mark reuses the same tetrahedron/circle icons at reduced opacity (Leaflet's
+per-marker `opacity` option — no separate faded icon asset needed) with a thin amber
+dashed line back to that mark's real position, so "how wrong" reads as a displacement,
+not just a second set of positions to mentally diff against the first.
+
 ## Development
 
 ```
