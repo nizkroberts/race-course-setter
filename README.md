@@ -252,6 +252,34 @@ per-marker `opacity` option — no separate faded icon asset needed) with a thin
 dashed line back to that mark's real position, so "how wrong" reads as a displacement,
 not just a second set of positions to mentally diff against the first.
 
+## Laylines to the first windward mark
+
+Also on the Wind Shift tab/overlay: `computeLaylines()` draws the two single-tack-change
+routes from the start line to mark 1 under the shifted wind — sail out on one tack until
+crossing the *other* tack's layline through the mark, tack, sail that layline straight
+in — using an assumed, adjustable tacking angle (`tackAngle`, degrees off the wind per
+tack). Each leg is coloured by which tack it's sailed on (green/red, the same
+port/starboard convention the marks-table chips already use) and labelled with its
+length. Returns `null` for a course with no single windward mark to aim at (the
+twin-gate windward-family courses, `WR`/`WG`).
+
+Geometry: two 2D line intersections (`localXY`/`fromXY`, a local flat-earth projection —
+accurate to well under a metre at course scale, the same order of approximation
+`destination()`/`inverse()` already accept) between a ray from the start at one tack
+heading and the *other* tack's layline (the full line through the mark at that bearing).
+
+**A property worth knowing, not a bug:** the two routes' *total* distances always come
+out equal, regardless of the wind axis — route 2 is the mirror image of route 1 across
+the start-to-mark line, so a wind shift doesn't change the total, only how it splits
+between the two tacks (confirmed with a fake-axis sweep from 0° to 165° off the mark's
+true bearing — total stayed within numerical noise of equal throughout, while the
+individual leg lengths swung from roughly even to a 400 m / 1860 m split). The tab's
+summary reports that split — starboard-tack distance vs. port-tack distance — not the
+(always-equal, and therefore uninformative) route totals; an earlier version of this
+compared totals and would have always reported "0 m difference," caught before shipping
+by testing the actual numbers rather than assuming the first framing that seemed
+intuitive was the informative one.
+
 ## Development
 
 ```

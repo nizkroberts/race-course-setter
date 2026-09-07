@@ -77,6 +77,64 @@ function toDDM(lat, lon) {
 }
 
 /* ============================================================
+   LAYLINES — the two single-tack-change routes from the start to the
+   first windward mark.
+   ============================================================ */
+
+// Local flat-earth projection about a fixed origin, accurate to well
+// under a metre at course-sized distances — the same order of
+// approximation destination()/inverse() themselves accept, just cheaper
+// to do a 2D line intersection in than on the sphere directly.
+function localXY(origin, pt) {
+  const { bearing, dist } = inverse(origin, pt);
+  const d = dist * M_PER_NM;
+  const th = rad(bearing);
+  return { x: d * Math.sin(th), y: d * Math.cos(th) };
+}
+function fromXY(origin, x, y) {
+  const dist = Math.hypot(x, y) / M_PER_NM;
+  const bearing = norm(deg(Math.atan2(x, y)));
+  return destination(origin.lat, origin.lon, bearing, dist);
+}
+
+/** The two "one tack change" routes from the start line to mark 1: sail
+ *  out on one tack until crossing the OTHER tack's layline through the
+ *  mark, tack, and sail that layline straight in. tackDeg is degrees off
+ *  the wind axis each tack sails (so a boat tacks through 2*tackDeg).
+ *  Returns null if this course has no single windward mark (M1) to aim
+ *  laylines at — the twin-gate windward-family courses (WR/WG) don't. */
+function computeLaylines(course, windAxis, tackDeg) {
+  const mark = course.marks.M1;
+  const start = course.marks.START;
+  if (!mark || !start) return null;
+
+  const hdgS = norm(windAxis - tackDeg); // starboard-tack heading
+  const hdgP = norm(windAxis + tackDeg); // port-tack heading
+  const dS = { x: Math.sin(rad(hdgS)), y: Math.cos(rad(hdgS)) };
+  const dP = { x: Math.sin(rad(hdgP)), y: Math.cos(rad(hdgP)) };
+  const b = localXY(start, mark); // mark, in local coords with start at the origin
+
+  // Where a ray from the start along d0 crosses the full line through the
+  // mark along d1 (2D ray/line intersection via the cross-product form).
+  const intersect = (d0, d1) => {
+    const denom = d0.x * d1.y - d0.y * d1.x;
+    if (Math.abs(denom) < 1e-9) return null; // tackDeg is 0 or 180 — no such course
+    const t = (b.x * d1.y - b.y * d1.x) / denom;
+    return fromXY(start, t * d0.x, t * d0.y);
+  };
+
+  const turnS = intersect(dS, dP); // starboard tack out to the port layline
+  const turnP = intersect(dP, dS); // port tack out to the starboard layline
+  if (!turnS || !turnP) return null;
+
+  const legM = (a, b2) => inverse(a, b2).dist * M_PER_NM;
+  return {
+    starboardFirst: { path: [start, turnS, mark], legs: [legM(start, turnS), legM(turnS, mark)] },
+    portFirst: { path: [start, turnP, mark], legs: [legM(start, turnP), legM(turnP, mark)] },
+  };
+}
+
+/* ============================================================
    CIRCULAR STATISTICS  (wind direction is an angle, not a number)
    ============================================================ */
 
@@ -698,7 +756,10 @@ function layingOrder(marks, from) {
 // SVG renderer sets stroke/fill as SVG presentation attributes rather than
 // inline `style`, so var(--x) doesn't resolve there — these need to be
 // literal values.
-const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8", muted: "#5C6E72", warn: "#8A5A08" };
+const MAP_COLORS = {
+  ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8", muted: "#5C6E72", warn: "#8A5A08",
+  port: "#B4342A", stbd: "#14704A",
+};
 
 const LEG_STYLE = {
   beat: { weight: 3, dashArray: null },
@@ -750,7 +811,7 @@ const boatHullIcon = (color) =>
 const rcBoatIcon = boatHullIcon(MAP_COLORS.rc);
 const refBoatIcon = boatHullIcon(MAP_COLORS.muted);
 
-function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat, overlayCourse }) {
+function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat, overlayCourse, laylines }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
@@ -968,7 +1029,35 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat, overlayCo
           )
           .addTo(group);
       });
-  }, [course, overlayCourse]);
+
+    // Laylines to the first windward mark, under the shifted wind: two
+    // single-tack-change routes, each leg coloured by which tack it's
+    // sailed on (matching the port/starboard convention used elsewhere in
+    // the app) and labelled with its length, so the two routes' total
+    // distances can be read straight off the map.
+    if (laylines) {
+      const drawLeg = (a, b, color, label) => {
+        L.polyline(
+          [[a.lat, a.lon], [b.lat, b.lon]],
+          { color, weight: 2.5, opacity: 0.85, dashArray: "6 4" }
+        )
+          .bindTooltip(label, { direction: "center" })
+          .addTo(group);
+      };
+      const { starboardFirst: sf, portFirst: pf } = laylines;
+      drawLeg(sf.path[0], sf.path[1], MAP_COLORS.stbd, `Starboard tack — ${Math.round(sf.legs[0])} m`);
+      drawLeg(sf.path[1], sf.path[2], MAP_COLORS.port, `Port tack into the mark — ${Math.round(sf.legs[1])} m`);
+      drawLeg(pf.path[0], pf.path[1], MAP_COLORS.port, `Port tack — ${Math.round(pf.legs[0])} m`);
+      drawLeg(pf.path[1], pf.path[2], MAP_COLORS.stbd, `Starboard tack into the mark — ${Math.round(pf.legs[1])} m`);
+      [sf.path[1], pf.path[1]].forEach((pt) => {
+        L.circleMarker([pt.lat, pt.lon], {
+          radius: 4, color: MAP_COLORS.ink, weight: 1, fillColor: MAP_COLORS.warn, fillOpacity: 1,
+        })
+          .bindTooltip("Tack here", { direction: "top", offset: [0, -6] })
+          .addTo(group);
+      });
+    }
+  }, [course, overlayCourse, laylines]);
 
   // Wind indicator: arrow points the direction the wind is blowing toward
   // (windAxis + 180); the label states the axis itself (blowing FROM) so
@@ -1375,7 +1464,8 @@ function newSaveId() {
    ============================================================ */
 
 function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWindAxis,
-                        windShiftOn, setWindShiftOn, course, shiftedCourse, dispBrg }) {
+                        windShiftOn, setWindShiftOn, tackAngle, setTackAngle,
+                        course, shiftedCourse, laylines, dispBrg }) {
   const rows = useMemo(() => {
     if (!shiftedCourse) return [];
     return Object.values(shiftedCourse.marks)
@@ -1417,6 +1507,27 @@ function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWind
             back to where that mark actually is now.
           </p>
         </div>
+
+        <div className="panel">
+          <h2>Laylines to the first windward mark</h2>
+          <div className="row">
+            <label htmlFor="tack">Assumed tacking angle, degrees off the wind</label>
+            <input id="tack" type="number" step="1" value={tackAngle}
+                   onChange={(e) => setTackAngle(+e.target.value)} />
+          </div>
+          <p className="note">
+            Every boat is assumed to tack through {Math.round(tackAngle * 2)}&deg; total —
+            modifiable, since that varies by class. Shows the two single-tack routes from
+            the start line to mark 1 under the new wind: sail out on one tack to the
+            other tack's layline, then tack and sail straight in.
+          </p>
+          {!laylines && (
+            <p className="note">
+              No single windward mark on this course to lay lines to (courses with a twin
+              windward gate — WR, WG — don't have one).
+            </p>
+          )}
+        </div>
       </div>
 
       <div>
@@ -1443,6 +1554,50 @@ function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWind
           )}
           <p className="note">Sorted worst first — the marks a shift to this axis hurts most.</p>
         </div>
+
+        {laylines && (
+          <div className="panel" style={{ marginTop: 12 }}>
+            <h2>Tack distances, under the new wind</h2>
+            <table>
+              <thead>
+                <tr><th>Route</th><th>1st tack</th><th>2nd tack</th><th>Total</th></tr>
+              </thead>
+              <tbody>
+                {[
+                  { name: "Starboard first", r: laylines.starboardFirst },
+                  { name: "Port first", r: laylines.portFirst },
+                ].map(({ name, r }) => (
+                  <tr key={name}>
+                    <td className="nm">{name}</td>
+                    <td>{Math.round(r.legs[0])} m</td>
+                    <td>{Math.round(r.legs[1])} m</td>
+                    <td>{Math.round(r.legs[0] + r.legs[1])} m</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(() => {
+              // The two routes' TOTALS are always equal — a property of this
+              // construction (route 2 is the mirror image of route 1 across
+              // the start-to-mark line), not something a wind shift changes.
+              // What the shift actually does is change how that total splits
+              // between the two tacks: starboardFirst's opening leg and
+              // portFirst's closing leg are both "distance sailed on
+              // starboard" (and should read the same, up to rounding); same
+              // for portFirst's opening / starboardFirst's closing on port.
+              const sTack = laylines.starboardFirst.legs[0];
+              const pTack = laylines.portFirst.legs[0];
+              const diff = Math.round(Math.abs(sTack - pTack));
+              return (
+                <p className="note">
+                  Starboard tack: {Math.round(sTack)} m. Port tack: {Math.round(pTack)} m.
+                  Difference: {diff} m — that split is what the wind shift actually changes;
+                  the route totals above stay equal regardless of the axis.
+                </p>
+              );
+            })()}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1461,6 +1616,7 @@ export default function CourseSetter() {
 
   const [windShiftOn, setWindShiftOn] = useState(false);
   const [shiftWindAxis, setShiftWindAxis] = useState(225);
+  const [tackAngle, setTackAngle] = useState(42); // degrees off the wind per tack; modifiable assumption
   const shiftTouchedRef = useRef(false);
   const onShiftWindAxis = useCallback((v) => {
     shiftTouchedRef.current = true;
@@ -1582,6 +1738,12 @@ export default function CourseSetter() {
   const shiftedCourse = useMemo(
     () => computeCourse({ ...base, windAxis: shiftWindAxis, beat }),
     [base, beat, shiftWindAxis]
+  );
+  // Laylines to the first windward mark, under the shifted wind — null for
+  // courses with no single M1 (the twin-gate windward family, WR/WG).
+  const laylines = useMemo(
+    () => computeLaylines(shiftedCourse, shiftWindAxis, tackAngle),
+    [shiftedCourse, shiftWindAxis, tackAngle]
   );
   const stats = windStats(obs);
   const est = estimateMinutes(course.legs, speed);
@@ -1848,7 +2010,8 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
           windAxis={windAxis} variation={variation} showMag={showMag}
           shiftWindAxis={shiftWindAxis} onShiftWindAxis={onShiftWindAxis}
           windShiftOn={windShiftOn} setWindShiftOn={setWindShiftOn}
-          course={course} shiftedCourse={shiftedCourse} dispBrg={dispBrg}
+          tackAngle={tackAngle} setTackAngle={setTackAngle}
+          course={course} shiftedCourse={shiftedCourse} laylines={laylines} dispBrg={dispBrg}
         />
       )}
 
@@ -2204,7 +2367,8 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
           <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
             <MapView course={course} windAxis={windAxis} sigLat={sigLat} sigLon={sigLon}
                      onMoveSignalBoat={handleMoveSignalBoat}
-                     overlayCourse={windShiftOn ? shiftedCourse : null} />
+                     overlayCourse={windShiftOn ? shiftedCourse : null}
+                     laylines={windShiftOn ? laylines : null} />
           </div>
 
           <div className="panel" style={{ marginTop: 12 }}>
