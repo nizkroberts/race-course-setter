@@ -100,6 +100,15 @@ every input tweak elsewhere in the app; marks and legs redraw in place, and the 
 only auto-fits to the course the first time (a "Center on course" button re-fits on
 demand after that).
 
+**Icons** follow real buoy conventions rather than the app's own port/starboard
+red-green scheme (that stays on the "marks in laying order" table, where rounding side
+is the point): the RC boat is a draggable boat icon labelled "RC" — drag it to reposition
+the signal boat, which recomputes the whole course from wherever you drop it; start and
+finish line ends and the offset mark (1a) are orange circles; every other physical mark
+is an orange tetrahedron. Classification is by each mark's `role` string
+(`isCircleMark()` in `MapView`), not a hardcoded id list, so it holds for every course
+family without per-signal special-casing.
+
 ## Development
 
 ```

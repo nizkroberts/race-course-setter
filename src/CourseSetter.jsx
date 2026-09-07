@@ -588,7 +588,7 @@ function layingOrder(marks, from) {
 // SVG renderer sets stroke/fill as SVG presentation attributes rather than
 // inline `style`, so var(--x) doesn't resolve there — these need to be
 // literal values.
-const MAP_COLORS = { ink: "#0E2129", port: "#B4342A", stbd: "#14704A", panel: "#F5F7F6" };
+const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C" };
 
 const LEG_STYLE = {
   beat: { weight: 3, dashArray: null },
@@ -596,13 +596,50 @@ const LEG_STYLE = {
   reach: { weight: 2.2, dashArray: "2 6" },
 };
 
-function MapView({ course, windAxis, sigLat, sigLon }) {
+// Real racing marks are a small, fixed vocabulary of shapes and one colour
+// (SCHEMA.md: "marks should be described by size, colour, and shape"), not
+// the port/starboard red-green scheme boats themselves use — so the map
+// icons below use that vocabulary rather than the "which side" table chips
+// elsewhere in the app (those stay red/green; that's rounding-side
+// information the RO still needs when reading the laying-order table).
+//
+// - Start/finish line ends and the offset mark (1a) render as circles.
+// - Every other physical mark (windward, wing/reach, gates, mark 5, slalom)
+//   renders as a tetrahedron — the shape most course marks actually are.
+// - The signal boat itself isn't a "mark" at all; it gets its own draggable
+//   boat icon (see rcBoatIcon below) and is excluded from this classifier.
+function isCircleMark(m) {
+  return m.id === "M1A" || m.role.startsWith("Start") || m.role.startsWith("Finish");
+}
+
+const tetIcon = L.divIcon({
+  className: "",
+  html: `<svg width="20" height="18" viewBox="0 0 20 18">
+    <polygon points="10,1 19,17 1,17" fill="${MAP_COLORS.mark}" stroke="${MAP_COLORS.ink}" stroke-width="1.4" stroke-linejoin="round"/>
+  </svg>`,
+  iconSize: [20, 18],
+  iconAnchor: [10, 9],
+});
+
+const rcBoatIcon = L.divIcon({
+  className: "rc-boat-icon",
+  html: `<div class="rc-boat-hull">&#9972;</div><div class="rc-boat-tag">RC</div>`,
+  iconSize: [40, 42],
+  iconAnchor: [20, 34],
+});
+
+function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
+  const rcMarkerRef = useRef(null);
   const firstFitRef = useRef(false);
   const windArrowRef = useRef(null);
   const windDegRef = useRef(null);
+  const onMoveSignalBoatRef = useRef(onMoveSignalBoat);
+  useEffect(() => {
+    onMoveSignalBoatRef.current = onMoveSignalBoat;
+  }, [onMoveSignalBoat]);
 
   // Create the map once and never again — recreating it on every course
   // change would reset pan/zoom out from under an RO who's just nudged a
@@ -659,6 +696,24 @@ function MapView({ course, windAxis, sigLat, sigLon }) {
     layerRef.current = L.featureGroup().addTo(map);
     mapRef.current = map;
 
+    // RC boat: manually draggable, so it lives outside the course layer
+    // group (which gets wiped and redrawn on every recompute) and is added
+    // directly to the map instead. onMoveSignalBoatRef, not the prop
+    // directly, so this drag handler — registered once, here — always calls
+    // whatever the current callback is rather than a stale closure from
+    // mount time.
+    const rc = L.marker([sigLat, sigLon], { icon: rcBoatIcon, draggable: true, autoPan: true })
+      .bindTooltip("RC — drag to move the signal boat", {
+        direction: "top",
+        offset: [0, -32],
+      })
+      .addTo(map);
+    rc.on("dragend", () => {
+      const { lat, lng } = rc.getLatLng();
+      onMoveSignalBoatRef.current(lat, lng);
+    });
+    rcMarkerRef.current = rc;
+
     const ro = new ResizeObserver(() => map.invalidateSize());
     ro.observe(el);
 
@@ -667,10 +722,18 @@ function MapView({ course, windAxis, sigLat, sigLon }) {
       map.remove();
       mapRef.current = null;
       layerRef.current = null;
+      rcMarkerRef.current = null;
     };
-    // Intentionally mount-once: sigLat/sigLon only seed the initial view.
+    // Intentionally mount-once: sigLat/sigLon only seed the initial position.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the RC boat marker in sync with sigLat/sigLon set any other way —
+  // typed into the Signal boat panel, read from GPS, or (via onMoveSignalBoat
+  // above) a previous drag. Harmless to call when it's already there.
+  useEffect(() => {
+    rcMarkerRef.current?.setLatLng([sigLat, sigLon]);
+  }, [sigLat, sigLon]);
 
   // Redraw marks and legs whenever the computed course changes. Doesn't
   // touch the current pan/zoom, except to fit bounds around the course the
@@ -710,26 +773,27 @@ function MapView({ course, windAxis, sigLat, sigLon }) {
       }
     });
 
+    // SS (the signal boat end of the start line) is excluded — that's the
+    // RC boat marker, drawn separately below, not a mark of the course.
     Object.values(marks)
-      .filter((m) => !m.virtual)
+      .filter((m) => !m.virtual && m.id !== "SS")
       .forEach((m) => {
-        const fill =
-          m.side === "port" ? MAP_COLORS.port : m.side === "stbd" ? MAP_COLORS.stbd : MAP_COLORS.ink;
-        const r = m.id === "M1A" || /^S[123]$/.test(m.id) ? 5 : 7;
-        L.circleMarker([m.lat, m.lon], {
-          radius: r,
-          color: MAP_COLORS.panel,
-          weight: 1.5,
-          fillColor: fill,
-          fillOpacity: 1,
-        })
-          .bindTooltip(m.label, {
-            permanent: true,
-            direction: "right",
-            offset: [8, 0],
-            className: "mlabel-tip",
-          })
-          .addTo(group);
+        const tooltipOpts = {
+          permanent: true,
+          direction: "right",
+          offset: [8, 0],
+          className: "mlabel-tip",
+        };
+        const layer = isCircleMark(m)
+          ? L.circleMarker([m.lat, m.lon], {
+              radius: 6,
+              color: MAP_COLORS.ink,
+              weight: 1.4,
+              fillColor: MAP_COLORS.mark,
+              fillOpacity: 1,
+            })
+          : L.marker([m.lat, m.lon], { icon: tetIcon });
+        layer.bindTooltip(m.label, tooltipOpts).addTo(group);
       });
 
     if (!firstFitRef.current) {
@@ -870,6 +934,12 @@ export default function CourseSetter() {
     );
   }, []);
 
+  const handleMoveSignalBoat = useCallback((lat, lon) => {
+    setSigLat(+lat.toFixed(6));
+    setSigLon(+lon.toFixed(6));
+    setFix(null);
+  }, []);
+
   const radioText = order
     .map((m, i) => {
       const d = toDDM(m.lat, m.lon);
@@ -973,6 +1043,12 @@ button:hover{opacity:.85}
   padding:6px 10px;margin:10px 0 0 10px;display:flex;align-items:center;gap:8px;
   font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink)}
 .app .map-wind-arrow{display:inline-block;font-size:18px;line-height:1;transition:transform .2s}
+.app .rc-boat-icon{display:flex;flex-direction:column;align-items:center;cursor:grab}
+.app .rc-boat-icon:active{cursor:grabbing}
+.app .rc-boat-hull{font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+.app .rc-boat-tag{margin-top:-3px;background:var(--ink);color:var(--panel);
+  font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;
+  padding:1px 5px;border:1px solid var(--panel)}
 .app .leaflet-control-scale-line{background:rgba(245,247,246,.85);border-color:var(--ink);
   color:var(--ink);font-family:'IBM Plex Mono',monospace}
 table{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px}
@@ -1016,12 +1092,12 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
             <div className="row">
               <label htmlFor="lat">Latitude</label>
               <input id="lat" type="number" step="0.000001" value={sigLat}
-                     onChange={(e) => setSigLat(+e.target.value)} />
+                     onChange={(e) => { setSigLat(+e.target.value); setFix(null); }} />
             </div>
             <div className="row">
               <label htmlFor="lon">Longitude</label>
               <input id="lon" type="number" step="0.000001" value={sigLon}
-                     onChange={(e) => setSigLon(+e.target.value)} />
+                     onChange={(e) => { setSigLon(+e.target.value); setFix(null); }} />
             </div>
             <button className="ghost" onClick={getGps}>Use my position</button>
             {gpsMsg && <p className="note">{gpsMsg}</p>}
@@ -1031,7 +1107,11 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 Re-read after the boat settles on its anchor.
               </p>
             )}
-            {!fix && <p className="note">Placeholder position. Read a fix or type one in.</p>}
+            {!fix && (
+              <p className="note">
+                Placeholder position. Read a fix, type one in, or drag the RC boat on the map.
+              </p>
+            )}
           </div>
 
           <div className="panel">
@@ -1275,7 +1355,8 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
 
         <div>
           <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
-            <MapView course={course} windAxis={windAxis} sigLat={sigLat} sigLon={sigLon} />
+            <MapView course={course} windAxis={windAxis} sigLat={sigLat} sigLon={sigLon}
+                     onMoveSignalBoat={handleMoveSignalBoat} />
           </div>
 
           <div className="panel" style={{ marginTop: 12 }}>
