@@ -1517,9 +1517,13 @@ function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWind
           </div>
           <p className="note">
             Every boat is assumed to tack through {Math.round(tackAngle * 2)}&deg; total —
-            modifiable, since that varies by class. Shows the two single-tack routes from
-            the start line to mark 1 under the new wind: sail out on one tack to the
-            other tack's layline, then tack and sail straight in.
+            modifiable, since that varies by class. Against the actual, currently-laid
+            start line and mark 1 — not the ghost course above — this shows the two
+            single-tack routes to that real mark 1 <em>if the wind were to shift</em> to
+            the axis above: sail out on one tack to the other tack's layline, then tack
+            and sail straight in. Since the mark hasn't actually moved, the two tacks
+            come out uneven once the wind has genuinely shifted — that unevenness is the
+            point.
           </p>
           {!laylines && (
             <p className="note">
@@ -1739,11 +1743,16 @@ export default function CourseSetter() {
     () => computeCourse({ ...base, windAxis: shiftWindAxis, beat }),
     [base, beat, shiftWindAxis]
   );
-  // Laylines to the first windward mark, under the shifted wind — null for
-  // courses with no single M1 (the twin-gate windward family, WR/WG).
+  // Laylines against the CURRENT course's actual mark 1 and start line —
+  // not shiftedCourse, which re-lays mark 1 square to the new wind by
+  // construction and would make every layline symmetric regardless of
+  // shift, defeating the point. Only the tack headings use the new wind;
+  // the marks this asks "how do I sail to them now" about are real, laid
+  // ones. Null for courses with no single M1 (the twin-gate windward
+  // family, WR/WG).
   const laylines = useMemo(
-    () => computeLaylines(shiftedCourse, shiftWindAxis, tackAngle),
-    [shiftedCourse, shiftWindAxis, tackAngle]
+    () => computeLaylines(course, shiftWindAxis, tackAngle),
+    [course, shiftWindAxis, tackAngle]
   );
   const stats = windStats(obs);
   const est = estimateMinutes(course.legs, speed);

@@ -255,13 +255,24 @@ not just a second set of positions to mentally diff against the first.
 ## Laylines to the first windward mark
 
 Also on the Wind Shift tab/overlay: `computeLaylines()` draws the two single-tack-change
-routes from the start line to mark 1 under the shifted wind — sail out on one tack until
-crossing the *other* tack's layline through the mark, tack, sail that layline straight
-in — using an assumed, adjustable tacking angle (`tackAngle`, degrees off the wind per
-tack). Each leg is coloured by which tack it's sailed on (green/red, the same
-port/starboard convention the marks-table chips already use) and labelled with its
-length. Returns `null` for a course with no single windward mark to aim at (the
-twin-gate windward-family courses, `WR`/`WG`).
+routes from the start line to mark 1 — sail out on one tack until crossing the *other*
+tack's layline through the mark, tack, sail that layline straight in — using an
+assumed, adjustable tacking angle (`tackAngle`, degrees off the wind per tack). Each leg
+is coloured by which tack it's sailed on (green/red, the same port/starboard convention
+the marks-table chips already use) and labelled with its length. Returns `null` for a
+course with no single windward mark to aim at (the twin-gate windward-family courses,
+`WR`/`WG`).
+
+**Laylines are computed against the CURRENT course's actual mark 1 and start line, not
+`shiftedCourse`** — only the tack headings use the new wind axis. This was a real bug in
+the first version: it used `shiftedCourse`, which re-lays mark 1 square to the new wind
+by construction, so the two tacks came out symmetric regardless of how far the wind had
+supposedly shifted — the laylines were answering "how would I lay out a fresh course for
+this wind," which the ghost-mark overlay already shows, not "how would sailing to the
+mark that's actually there change if the wind shifted," which is the point of a layline.
+Fixed by passing `course` (the real one) instead — confirmed with a sweep of assumed
+wind angles against a fixed mark: symmetric at zero shift, diverging sharply as the
+shift grows (e.g. roughly even down to a 400 m / 1730 m split at a 20-degree shift).
 
 Geometry: two 2D line intersections (`localXY`/`fromXY`, a local flat-earth projection —
 accurate to well under a metre at course scale, the same order of approximation
