@@ -698,7 +698,7 @@ function layingOrder(marks, from) {
 // SVG renderer sets stroke/fill as SVG presentation attributes rather than
 // inline `style`, so var(--x) doesn't resolve there — these need to be
 // literal values.
-const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8" };
+const MAP_COLORS = { ink: "#0E2129", mark: "#E8720C", rc: "#1F5FA8", muted: "#5C6E72" };
 
 const LEG_STYLE = {
   beat: { weight: 3, dashArray: null },
@@ -733,16 +733,22 @@ const tetIcon = L.divIcon({
 
 // A plain overhead hull silhouette — pointed bow, flat transom — rather
 // than a side-view boat glyph, since everything else on the map is drawn
-// in plan view too.
-const rcBoatIcon = L.divIcon({
-  className: "rc-boat-icon",
-  html: `<svg class="rc-boat-hull" width="24" height="36" viewBox="0 0 24 36">
-      <path d="M12,1 Q20,10 20,16 L18,32 L6,32 L4,16 Q4,10 12,1 Z"
-            fill="${MAP_COLORS.rc}" stroke="${MAP_COLORS.ink}" stroke-width="1.6" stroke-linejoin="round"/>
-    </svg>`,
-  iconSize: [24, 36],
-  iconAnchor: [12, 18],
-});
+// in plan view too. Colour distinguishes what the boat IS: rcBoatIcon
+// (blue) is always the actual, draggable signal/RC boat; refBoatIcon
+// (muted grey) is the same shape used purely as a fixed reference point
+// on a map where it isn't the thing being interacted with.
+const boatHullIcon = (color) =>
+  L.divIcon({
+    className: "rc-boat-icon",
+    html: `<svg class="rc-boat-hull" width="24" height="36" viewBox="0 0 24 36">
+        <path d="M12,1 Q20,10 20,16 L18,32 L6,32 L4,16 Q4,10 12,1 Z"
+              fill="${color}" stroke="${MAP_COLORS.ink}" stroke-width="1.6" stroke-linejoin="round"/>
+      </svg>`,
+    iconSize: [24, 36],
+    iconAnchor: [12, 18],
+  });
+const rcBoatIcon = boatHullIcon(MAP_COLORS.rc);
+const refBoatIcon = boatHullIcon(MAP_COLORS.muted);
 
 function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
   const containerRef = useRef(null);
@@ -1016,10 +1022,11 @@ function BearingCompass({ bearing }) {
  *  Unlike the course-design map, this one auto-fits to keep both visible
  *  as the boat moves — that's the point of a navigation display, not
  *  something to avoid the way resetting the view mid-edit would be. */
-function TargetMap({ target, tol, boatLat, boatLon, onMoveBoat, autoCenter }) {
+function TargetMap({ target, tol, boatLat, boatLon, onMoveBoat, autoCenter, rcLat, rcLon }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const boatMarkerRef = useRef(null);
+  const rcMarkerRef = useRef(null);
   const targetLayerRef = useRef(null);
   const onMoveBoatRef = useRef(onMoveBoat);
   useEffect(() => {
@@ -1048,6 +1055,15 @@ function TargetMap({ target, tol, boatLat, boatLon, onMoveBoat, autoCenter }) {
       onMoveBoatRef.current(lat, lng);
     });
     boatMarkerRef.current = boat;
+
+    // Fixed reference point, not interactive here — the RC boat's position
+    // is set on the Course Design tab; this just shows where it is while
+    // you're laying marks, for orientation. Grey, not blue, so it never
+    // reads as "your position" or invites a drag that wouldn't do anything.
+    rcMarkerRef.current = L.marker([rcLat, rcLon], { icon: refBoatIcon, interactive: false })
+      .bindTooltip("RC boat", { direction: "top", offset: [0, -32] })
+      .addTo(map);
+
     mapRef.current = map;
 
     const ro = new ResizeObserver(() => map.invalidateSize());
@@ -1058,15 +1074,20 @@ function TargetMap({ target, tol, boatLat, boatLon, onMoveBoat, autoCenter }) {
       map.remove();
       mapRef.current = null;
       boatMarkerRef.current = null;
+      rcMarkerRef.current = null;
       targetLayerRef.current = null;
     };
-    // Mount-once: boatLat/boatLon only seed the initial view.
+    // Mount-once: boatLat/boatLon/rcLat/rcLon only seed the initial state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     boatMarkerRef.current?.setLatLng([boatLat, boatLon]);
   }, [boatLat, boatLon]);
+
+  useEffect(() => {
+    rcMarkerRef.current?.setLatLng([rcLat, rcLon]);
+  }, [rcLat, rcLon]);
 
   useEffect(() => {
     const group = targetLayerRef.current;
@@ -1108,7 +1129,7 @@ function TargetMap({ target, tol, boatLat, boatLon, onMoveBoat, autoCenter }) {
  *  actually laid out of tolerance elsewhere shifting a dependent one; see
  *  the functionality spec's AS_LAID/DESIGNED mark DAG for that, still
  *  unbuilt) and turns "get to mark X" into a distance and a bearing. */
-function MarkSetterTab({ course, dispBrg, showMag }) {
+function MarkSetterTab({ course, dispBrg, showMag, sigLat, sigLon }) {
   const [markId, setMarkId] = useState(null);
   const [boatLat, setBoatLat] = useState(44.462722);
   const [boatLon, setBoatLon] = useState(-78.712556);
@@ -1218,7 +1239,8 @@ function MarkSetterTab({ course, dispBrg, showMag }) {
       <div>
         <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
           <TargetMap target={target} tol={tol} boatLat={boatLat} boatLon={boatLon}
-                     onMoveBoat={handleMoveBoat} autoCenter={autoCenter} />
+                     onMoveBoat={handleMoveBoat} autoCenter={autoCenter}
+                     rcLat={sigLat} rcLon={sigLon} />
         </div>
 
         <div className="panel" style={{ marginTop: 12 }}>
@@ -1555,7 +1577,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
       </div>
 
       {tab === "setter" && (
-        <MarkSetterTab course={course} dispBrg={dispBrg} showMag={showMag} />
+        <MarkSetterTab course={course} dispBrg={dispBrg} showMag={showMag} sigLat={sigLat} sigLon={sigLon} />
       )}
 
       {tab === "design" && (

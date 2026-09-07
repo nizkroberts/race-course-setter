@@ -195,7 +195,17 @@ same drag-to-set pattern the signal boat already uses. The map auto-fits to keep
 the boat and the target in view as either moves — deliberately different from Course
 Design's map, which never auto-recenters once a course is drawn: here the point *is* to
 follow you while you're actually in transit (an **auto-center** checkbox turns it off
-if that's not wanted). The bearing readout drives a fixed, north-up compass rose with a
+if that's not wanted).
+
+The **RC boat** itself also shows on this map — at whatever position it's set to on the
+Course Design tab, kept in sync live if you switch tabs and move it — as a grey,
+non-interactive reference point (`refBoatIcon`; the same hull shape as the blue,
+draggable "your position" one, just muted, so it never reads as something you can drag
+here). It doesn't factor into the auto-fit bounds — the map stays zoomed to the target
+and your own position, which is the point of this screen, rather than pulling out wide
+whenever the RC boat happens to be far from the mark being set.
+
+The bearing readout drives a fixed, north-up compass rose with a
 rotating arrow — there's no heading sensor available in a browser, only a GPS fix, so
 this shows *bearing to steer toward the mark*, the way a simple handheld GPS's
 "bearing to waypoint" works, not a boat-relative pointer.
