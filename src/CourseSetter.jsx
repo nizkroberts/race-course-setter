@@ -629,10 +629,9 @@ const rcBoatIcon = L.divIcon({
   html: `<svg class="rc-boat-hull" width="24" height="36" viewBox="0 0 24 36">
       <path d="M12,1 Q20,10 20,16 L18,32 L6,32 L4,16 Q4,10 12,1 Z"
             fill="${MAP_COLORS.rc}" stroke="${MAP_COLORS.ink}" stroke-width="1.6" stroke-linejoin="round"/>
-    </svg>
-    <div class="rc-boat-tag">RC</div>`,
-  iconSize: [40, 42],
-  iconAnchor: [20, 34],
+    </svg>`,
+  iconSize: [24, 36],
+  iconAnchor: [12, 18],
 });
 
 function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
@@ -1050,12 +1049,9 @@ button:hover{opacity:.85}
   padding:6px 10px;margin:10px 0 0 10px;display:flex;align-items:center;gap:8px;
   font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink)}
 .app .map-wind-arrow{display:inline-block;font-size:18px;line-height:1;transition:transform .2s}
-.app .rc-boat-icon{display:flex;flex-direction:column;align-items:center;cursor:grab}
+.app .rc-boat-icon{cursor:grab}
 .app .rc-boat-icon:active{cursor:grabbing}
 .app .rc-boat-hull{display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
-.app .rc-boat-tag{margin-top:-3px;background:var(--ink);color:var(--panel);
-  font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;
-  padding:1px 5px;border:1px solid var(--panel)}
 .app .leaflet-control-scale-line{background:rgba(245,247,246,.85);border-color:var(--ink);
   color:var(--ink);font-family:'IBM Plex Mono',monospace}
 table{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px}
