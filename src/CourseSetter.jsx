@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 
 /* ============================================================
    GEODESY
@@ -293,6 +293,30 @@ const CLASS_SPEEDS = {
   "GP14 / Wayfarer": { up: 2.7, reach: 5.6, down: 3.7 },
   "Club handicap": { up: 2.9, reach: 6.0, down: 3.9 },
 };
+
+// Wind-speed-to-boatspeed model. CLASS_SPEEDS above are reference speeds at
+// WIND_REF_KTS ("moderate breeze" — the same assumption the seed table
+// already documented). Scaling them for a different assumed wind strength
+// uses a saturating power curve rather than a straight ratio, because
+// dinghy speed does not scale linearly with wind speed all the way up:
+// light air is close to linear, but by the time the fleet is hiking flat
+// out, depowering, or reefed, extra wind buys steadily less extra speed.
+// Downwind and reaching are less wind-limited than upwind — a boat carries
+// more sail effectively off the wind, and planing hulls in particular keep
+// gaining speed well into a breeze that has already capped the upwind leg
+// — hence the higher exponents for reach/down.
+const WIND_REF_KTS = 12;
+const WIND_EXP = { up: 0.45, reach: 0.65, down: 0.75 };
+
+function speedsFromWind(cls, windKts) {
+  const ref = CLASS_SPEEDS[cls];
+  const ratio = Math.max(windKts, 2) / WIND_REF_KTS;
+  return {
+    up: ref.up * ratio ** WIND_EXP.up,
+    reach: ref.reach * ratio ** WIND_EXP.reach,
+    down: ref.down * ratio ** WIND_EXP.down,
+  };
+}
 
 /** Elapsed minutes for the leading boat, timed leg by leg. */
 function estimateMinutes(legs, sp) {
@@ -685,9 +709,19 @@ export default function CourseSetter() {
 
   const [useTarget, setUseTarget] = useState(true);
   const [targetMin, setTargetMin] = useState(50);
+  const [windSpeed, setWindSpeed] = useState(WIND_REF_KTS);
   const [cls, setCls] = useState("ILCA 6");
-  const [speed, setSpeed] = useState({ ...CLASS_SPEEDS["ILCA 6"] });
+  const [speed, setSpeed] = useState(() => speedsFromWind("ILCA 6", WIND_REF_KTS));
   const [manualBeat, setManualBeat] = useState(1.0);
+
+  // Re-estimate boat speed whenever the class or the assumed wind speed
+  // changes. Editing one of the three speed fields directly overrides this
+  // until the class or wind speed changes again — same override pattern
+  // the class picker alone used before wind speed was in the loop.
+  useEffect(() => {
+    setSpeed(speedsFromWind(cls, windSpeed));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cls, windSpeed]);
 
   const [entries, setEntries] = useState(30);
   const [meanLoa, setMeanLoa] = useState(4.2);
@@ -1044,8 +1078,13 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                   <input id="tm" type="number" value={targetMin}
                          onChange={(e) => setTargetMin(+e.target.value)} />
                 </div>
+                <div className="row">
+                  <label htmlFor="ws">Assumed wind speed, knots</label>
+                  <input id="ws" type="number" step="0.5" value={windSpeed}
+                         onChange={(e) => setWindSpeed(+e.target.value)} />
+                </div>
                 <select className="wide" value={cls} aria-label="Class"
-                        onChange={(e) => { setCls(e.target.value); setSpeed({ ...CLASS_SPEEDS[e.target.value] }); }}>
+                        onChange={(e) => setCls(e.target.value)}>
                   {Object.keys(CLASS_SPEEDS).map((c) => <option key={c}>{c}</option>)}
                 </select>
                 <div className="row" style={{ marginTop: 9 }}>
@@ -1069,8 +1108,10 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                   separately, a target time set here holds when you switch course family.
                 </p>
                 <p className="note">
-                  Seed estimates in knots. Log your actual elapsed times and adjust them for
-                  your venue — after a season this will beat any published table.
+                  Estimated from the assumed wind speed: roughly linear in light air, with
+                  diminishing returns in a breeze as the fleet depowers, hikes flat out, or
+                  reefs. Override any of the three directly to match logged elapsed times for
+                  your venue — that sticks until you change class or wind speed.
                 </p>
               </>
             ) : (
