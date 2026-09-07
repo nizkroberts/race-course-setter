@@ -2,7 +2,8 @@
 
 A tool for club race officers: turns a signal-boat GPS position, a wind reading, and a
 course-type selection (windward/leeward, triangle, or trapezoid) into actual lat/lon mark
-positions, a course overlaid on a live map, a laying order, and radio-callable positions.
+positions, a course overlaid on a live map, a laying order, and radio-callable positions —
+plus a second tab that navigates a mark boat to any one of those computed positions.
 
 Recovered from an earlier Claude (Mac app) session and set up here as a normal Vite +
 React project for continued development.
@@ -159,6 +160,35 @@ regression check (comparing gate position with and without a custom `gateDist`, 
 "does it produce finite output") caught it. Worth remembering when adding the next course:
 non-crashing isn't the same as correct, and each new mechanism needs a check that would
 actually fail if the wiring were missing.
+
+## Mark Setter tab
+
+A second tab (`MarkSetterTab`), alongside Course Design, for actually laying a mark:
+pick one of the current course's designed positions from a dropdown, and it turns "get
+there" into a distance in metres and a bearing to steer, on a zoomed-in map showing the
+target and a "good enough" tolerance circle around it (radius from `markTolerance()` —
+the functionality spec's per-role tolerance model: ±25 m for a windward/gate mark,
+±20 m for a wing/reach mark, ±10 m for a start/finish line end, ±8 m for the offset,
+±5 m for a slalom mark).
+
+"Current position" is independent of the Course Design tab's signal boat — it's a
+different boat. **Track my position** starts a live `watchPosition()` GPS feed;
+dragging the boat icon on the map (or just not tracking) sets it manually instead, the
+same drag-to-set pattern the signal boat already uses. The map auto-fits to keep both
+the boat and the target in view as either moves — deliberately different from Course
+Design's map, which never auto-recenters once a course is drawn: here the point *is* to
+follow you while you're actually in transit (an **auto-center** checkbox turns it off
+if that's not wanted). The bearing readout drives a fixed, north-up compass rose with a
+rotating arrow — there's no heading sensor available in a browser, only a GPS fix, so
+this shows *bearing to steer toward the mark*, the way a simple handheld GPS's
+"bearing to waypoint" works, not a boat-relative pointer.
+
+**Known limitation:** this reads the course's *designed* positions only. It doesn't yet
+know that an out-of-tolerance drop on one mark should shift a dependent one (the offset
+1a is defined relative to mark 1 *as actually laid*, not as designed) — that's the
+AS_LAID vs. DESIGNED mark dependency DAG from the functionality spec (§3, "the mark
+dependency DAG"), still unbuilt. Every mark this tab points to is exactly where Course
+Design says it should be, not where an already-laid neighbor actually ended up.
 
 ## Development
 

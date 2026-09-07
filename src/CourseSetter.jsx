@@ -936,10 +936,300 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
 }
 
 /* ============================================================
+   MARK SETTER — navigate a mark boat to one designed position
+   ============================================================ */
+
+// Per-role "good enough" tolerance, in metres. From the functionality
+// spec's tolerance model: position error matters in proportion to leg
+// length, so it's expressed per mark role rather than as one global
+// distance — a lateral error that's nothing on a long beat destroys the
+// geometry a short offset or slalom leg exists to create.
+function markTolerance(m) {
+  if (m.id === "M1A") return 8;
+  if (/^S[123]$/.test(m.id)) return 5;
+  if (m.role.startsWith("Start") || m.role.startsWith("Finish")) return 10;
+  if (m.role === "Wing mark" || m.role === "Reach mark") return 20;
+  return 25; // windward mark, gate marks, mark 5
+}
+
+// A fixed, north-up compass rose — there's no heading sensor here, just a
+// GPS fix, so this shows the bearing to steer TOWARD the mark (the way a
+// simple handheld GPS's "bearing to waypoint" arrow works), not a
+// boat-relative pointer.
+function BearingCompass({ bearing }) {
+  const ticks = [0, 45, 90, 135, 180, 225, 270, 315];
+  return (
+    <svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="Bearing to mark">
+      <circle cx="80" cy="80" r="72" fill="var(--panel)" stroke="var(--rule)" strokeWidth="2" />
+      {ticks.map((d) => {
+        const th = rad(d - 90);
+        const r1 = d % 90 === 0 ? 58 : 64;
+        const x1 = 80 + r1 * Math.cos(th), y1 = 80 + r1 * Math.sin(th);
+        const x2 = 80 + 72 * Math.cos(th), y2 = 80 + 72 * Math.sin(th);
+        return <line key={d} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--muted)" strokeWidth={d % 90 === 0 ? 2 : 1} />;
+      })}
+      <text x="80" y="20" textAnchor="middle" className="compass-n">N</text>
+      {bearing != null && (
+        <g transform={`rotate(${bearing} 80 80)`}>
+          <polygon points="80,22 91,86 80,72 69,86" fill="var(--mark)" stroke="var(--ink)" strokeWidth="1.5" strokeLinejoin="round" />
+        </g>
+      )}
+      <circle cx="80" cy="80" r="5" fill="var(--ink)" />
+    </svg>
+  );
+}
+
+/** Live map for one target: the designed position with its tolerance
+ *  circle, and a draggable boat icon for the mark boat's current position.
+ *  Unlike the course-design map, this one auto-fits to keep both visible
+ *  as the boat moves — that's the point of a navigation display, not
+ *  something to avoid the way resetting the view mid-edit would be. */
+function TargetMap({ target, tol, boatLat, boatLon, onMoveBoat, autoCenter }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const boatMarkerRef = useRef(null);
+  const targetLayerRef = useRef(null);
+  const onMoveBoatRef = useRef(onMoveBoat);
+  useEffect(() => {
+    onMoveBoatRef.current = onMoveBoat;
+  }, [onMoveBoat]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || el._leaflet_id) return undefined;
+
+    const map = L.map(el, { attributionControl: true, zoomControl: true }).setView([boatLat, boatLon], 17);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+    L.control.scale({ metric: true, imperial: false, maxWidth: 150 }).addTo(map);
+
+    targetLayerRef.current = L.featureGroup().addTo(map);
+
+    const boat = L.marker([boatLat, boatLon], { icon: rcBoatIcon, draggable: true, autoPan: true })
+      .bindTooltip("Your position — drag to set manually", { direction: "top", offset: [0, -32] })
+      .addTo(map);
+    boat.on("dragend", () => {
+      const { lat, lng } = boat.getLatLng();
+      onMoveBoatRef.current(lat, lng);
+    });
+    boatMarkerRef.current = boat;
+    mapRef.current = map;
+
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      map.remove();
+      mapRef.current = null;
+      boatMarkerRef.current = null;
+      targetLayerRef.current = null;
+    };
+    // Mount-once: boatLat/boatLon only seed the initial view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    boatMarkerRef.current?.setLatLng([boatLat, boatLon]);
+  }, [boatLat, boatLon]);
+
+  useEffect(() => {
+    const group = targetLayerRef.current;
+    if (!group) return;
+    group.clearLayers();
+    if (!target) return;
+    L.circle([target.lat, target.lon], {
+      radius: tol,
+      color: MAP_COLORS.mark,
+      weight: 2,
+      dashArray: "5 5",
+      fillColor: MAP_COLORS.mark,
+      fillOpacity: 0.12,
+    }).addTo(group);
+    const layer = isCircleMark(target)
+      ? L.circleMarker([target.lat, target.lon], {
+          radius: 6, color: MAP_COLORS.ink, weight: 1.4, fillColor: MAP_COLORS.mark, fillOpacity: 1,
+        })
+      : L.marker([target.lat, target.lon], { icon: tetIcon });
+    layer
+      .bindTooltip(target.label, { permanent: true, direction: "right", offset: [8, 0], className: "mlabel-tip" })
+      .addTo(group);
+  }, [target, tol]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !target || !autoCenter) return;
+    map.fitBounds(L.latLngBounds([[boatLat, boatLon], [target.lat, target.lon]]), {
+      padding: [50, 50],
+      maxZoom: 18,
+    });
+  }, [target, boatLat, boatLon, autoCenter]);
+
+  return <div ref={containerRef} className="mapwrap" role="img" aria-label="Target mark with current position" />;
+}
+
+/** The mark-setter tab. Reads the already-computed course from the design
+ *  tab (marks are DESIGNED positions — this doesn't yet know about a mark
+ *  actually laid out of tolerance elsewhere shifting a dependent one; see
+ *  the functionality spec's AS_LAID/DESIGNED mark DAG for that, still
+ *  unbuilt) and turns "get to mark X" into a distance and a bearing. */
+function MarkSetterTab({ course, dispBrg, showMag }) {
+  const [markId, setMarkId] = useState(null);
+  const [boatLat, setBoatLat] = useState(44.462722);
+  const [boatLon, setBoatLon] = useState(-78.712556);
+  const [tracking, setTracking] = useState(false);
+  const [boatFix, setBoatFix] = useState(null);
+  const [gpsMsg, setGpsMsg] = useState("");
+  const [autoCenter, setAutoCenter] = useState(true);
+  const watchIdRef = useRef(null);
+
+  const settable = useMemo(
+    () => Object.values(course.marks).filter((m) => !m.virtual && m.id !== "SS"),
+    [course.marks]
+  );
+
+  // Default to the first mark, and fall back if the selected one no longer
+  // exists — course/beat/signal changes can add, remove, or rename marks.
+  useEffect(() => {
+    if (!settable.some((m) => m.id === markId)) setMarkId(settable[0]?.id || null);
+  }, [settable, markId]);
+
+  const target = settable.find((m) => m.id === markId) || null;
+
+  const stopWatch = () => {
+    if (watchIdRef.current != null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+  };
+  useEffect(() => stopWatch, []); // clear on unmount
+
+  const toggleTracking = () => {
+    if (tracking) {
+      stopWatch();
+      setTracking(false);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setGpsMsg("This browser has no location service. Drag the boat icon instead.");
+      return;
+    }
+    setGpsMsg("");
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        setBoatLat(pos.coords.latitude);
+        setBoatLon(pos.coords.longitude);
+        setBoatFix({ acc: pos.coords.accuracy, t: new Date() });
+      },
+      () => setGpsMsg("Location unavailable. Drag the boat icon instead."),
+      { enableHighAccuracy: true, maximumAge: 1000 }
+    );
+    setTracking(true);
+  };
+
+  const handleMoveBoat = useCallback((lat, lon) => {
+    stopWatch();
+    setTracking(false);
+    setBoatLat(lat);
+    setBoatLon(lon);
+    setBoatFix(null);
+  }, []);
+
+  const nav = target ? inverse({ lat: boatLat, lon: boatLon }, target) : null;
+  const distM = nav ? nav.dist * M_PER_NM : null;
+  const tol = target ? markTolerance(target) : null;
+  const withinTol = distM != null && tol != null && distM <= tol;
+  const dispNavBrg = nav ? dispBrg(nav.bearing) : null;
+
+  return (
+    <div className="grid">
+      <div>
+        <div className="panel">
+          <h2>Mark to set</h2>
+          {settable.length ? (
+            <select className="wide" value={markId || ""} aria-label="Mark to set"
+                    onChange={(e) => setMarkId(e.target.value)}>
+              {settable.map((m) => (
+                <option key={m.id} value={m.id}>{m.label} — {m.role}</option>
+              ))}
+            </select>
+          ) : (
+            <p className="note">No marks in the current course — set one up in Course Design first.</p>
+          )}
+        </div>
+
+        <div className="panel">
+          <h2>Your position</h2>
+          <button className="ghost" onClick={toggleTracking}>
+            {tracking ? "Stop tracking" : "Track my position"}
+          </button>
+          {gpsMsg && <p className="note">{gpsMsg}</p>}
+          {boatFix && (
+            <p className="note">
+              Fixed {boatFix.t.toLocaleTimeString()}, accurate to {Math.round(boatFix.acc)} m.
+            </p>
+          )}
+          {!tracking && !boatFix && (
+            <p className="note">Not tracking. Drag the boat icon on the map to set a position by hand.</p>
+          )}
+          <div className="row" style={{ marginTop: 9 }}>
+            <label htmlFor="autoc">Auto-center map</label>
+            <input id="autoc" type="checkbox" checked={autoCenter} style={{ width: "auto" }}
+                   onChange={(e) => setAutoCenter(e.target.checked)} />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+          <TargetMap target={target} tol={tol} boatLat={boatLat} boatLon={boatLon}
+                     onMoveBoat={handleMoveBoat} autoCenter={autoCenter} />
+        </div>
+
+        <div className="panel" style={{ marginTop: 12 }}>
+          <h2>Steer to mark</h2>
+          {target ? (
+            <>
+              <div className="readout">
+                <div><span>distance</span><strong>{Math.round(distM)} m</strong></div>
+                <div>
+                  <span>bearing</span>
+                  <strong>{String(Math.round(dispNavBrg)).padStart(3, "0")}&deg;{showMag ? "M" : "T"}</strong>
+                </div>
+                <div><span>good within</span><strong>&plusmn;{tol} m</strong></div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", margin: "6px 0 14px" }}>
+                <BearingCompass bearing={dispNavBrg} />
+              </div>
+              {withinTol ? (
+                <div className="warn" style={{ borderLeftColor: "var(--stbd)", background: "#E5F1EA", color: "#0F3A24" }}>
+                  Within tolerance of {target.label} — good to drop.
+                </div>
+              ) : (
+                <p className="note">
+                  Steer {String(Math.round(dispNavBrg)).padStart(3, "0")}&deg;{showMag ? "M" : "T"} for{" "}
+                  {Math.round(distM)} m to reach {target.label}.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="note">Select a mark to navigate to.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    APP
    ============================================================ */
 
 export default function CourseSetter() {
+  const [tab, setTab] = useState("design");
   const [sigLat, setSigLat] = useState(44.462722); // 44°27'45.8"N
   const [sigLon, setSigLon] = useState(-78.712556); // 78°42'45.2"W
   const [fix, setFix] = useState(null);
@@ -1140,6 +1430,7 @@ export default function CourseSetter() {
 .app{
   --sea:#DCE3E1; --panel:#F5F7F6; --ink:#0E2129; --deep:#1F3A55;
   --muted:#5C6E72; --rule:#B3C1BE; --port:#B4342A; --stbd:#14704A; --warn:#8A5A08;
+  --mark:#E8720C; --rc:#1F5FA8;
   font-family:'Barlow Semi Condensed',-apple-system,'Segoe UI',sans-serif;
   background:var(--sea); color:var(--ink); min-height:100%;
   padding:20px; font-size:16px; line-height:1.45;
@@ -1150,6 +1441,12 @@ export default function CourseSetter() {
   border-bottom:2px solid var(--ink);padding-bottom:10px;margin-bottom:18px}
 .masthead h1{font-size:26px;font-weight:600;margin:0;letter-spacing:.01em}
 .masthead p{margin:0;color:var(--muted);font-size:15px}
+.tabs{display:flex;gap:0;border:1px solid var(--ink);width:fit-content;margin-bottom:14px}
+.tabs button{border:0;background:var(--panel);color:var(--ink);padding:9px 18px;
+  font-size:15px;border-right:1px solid var(--ink);cursor:pointer}
+.tabs button:last-child{border-right:0}
+.tabs button[data-on=true]{background:var(--ink);color:var(--panel)}
+.compass-n{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;fill:var(--muted)}
 .grid{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:18px;align-items:start}
 @media(max-width:860px){.grid{grid-template-columns:1fr}}
 .panel{background:var(--panel);border:1px solid var(--rule);padding:14px 15px 16px}
@@ -1220,6 +1517,17 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
         <p>Signal boat position to mark positions, for club race officers</p>
       </div>
 
+      <div className="tabs">
+        <button data-on={tab === "design"} onClick={() => setTab("design")}>Course Design</button>
+        <button data-on={tab === "setter"} onClick={() => setTab("setter")}>Mark Setter</button>
+      </div>
+
+      {tab === "setter" && (
+        <MarkSetterTab course={course} dispBrg={dispBrg} showMag={showMag} />
+      )}
+
+      {tab === "design" && (
+      <>
       <div className="readout">
         <div><span>course</span><strong>{dispSignal}</strong></div>
         <div><span>beat</span><strong>{beat.toFixed(2)} nm</strong></div>
@@ -1593,6 +1901,8 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
