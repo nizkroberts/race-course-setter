@@ -117,24 +117,48 @@ declarative, per-course list of parameters, each with its own independently-reme
 value, shown in a "Course options" panel that only appears for courses that define one.
 Switching from a configured course to another and back doesn't lose its settings.
 
-`LG` (windward/leeward, reaching finish to starboard) is the first course wired up this
-way, with four options: **include windward offset** (its own `includeOffset` /
-`offsetDist` / `offsetAngle`, independent of the shared offset used by `L`/`W`/etc.),
-**distance to gate from start line** (overrides the shared start-offset for this course
-only), **angle of reach** (degrees off the wind axis for the final reaching leg — a
-parameter that didn't exist before this; other reach finishes still use the old generic
-"toward the start line" heuristic), and **length of reach to finish**.
+Every **windward/leeward course** (`L`, `W`, `M`, `LR`, `LG`, `WR`, `WG`, `LS`) is wired
+up this way now — each with its own **distance to gate from start line**
+(`gateDist`, overriding the shared start-offset for that course only), and, where it
+applies:
+
+- **Include windward offset** (`includeOffset` / `offsetDist` / `offsetAngle`) — `L`,
+  `W`, `M`, `LR`, `LG`, `LS`. Not offered for `WR`/`WG`: the windward mark there is
+  already a twin gate, and the source docs give no anchor for where a 1a would sit
+  relative to a *pair* of marks instead of one.
+- **Angle of reach off the wind** and **length of reach to finish** (`reachAngle` /
+  `reachLength`) — `LR`, `LG`, `WR`, `WG`. The finish becomes a real reach leg off the
+  actual gate mark at the requested angle and length, replacing the generic "toward the
+  start line" heuristic every other reach finish (`TR`, and the two not yet configured)
+  still uses.
+- **Distance from windward mark to finish** (`finishOffset`) — `W` only. Previously the
+  same shared value did both this job and the gate-distance job above; now they're
+  independent.
+- **Finish distance after slalom**, **slalom leg length**, **slalom angle between
+  marks** — `LS` only, each its own copy of the fields `IS`/`OS` still share globally.
+
+None of this changed any course's *default* geometry — every default reproduces the
+prior shared-global output exactly (verified: see below).
 
 Extending another course to this pattern is two steps:
 
 1. Add an entry to `COURSE_OPTIONS[SIGNAL]` — reusing an existing field name
-   (`offsetDist`, `startOffset`, ...) opts that course into a mechanism that already
-   exists, elsewhere in `computeCourse`, with its own stored value; a genuinely new
-   concept (like `reachAngle`) needs `computeCourse` taught what to do with it once,
-   the same way `gateDist`/`reachAngle`/`reachLength` were added for `LG`.
+   (`offsetDist`, `slalomLegDist`, ...) opts that course into a mechanism that already
+   exists elsewhere in `computeCourse`, with its own stored value (free — `GATE_DIST_OPT`
+   / `OFFSET_OPTS` / `REACH_OPTS` are ready-made spreadable groups for the three
+   mechanisms every windward/leeward course above uses). A genuinely new concept (like
+   `reachAngle` originally was) needs `computeCourse` taught what to do with it once.
 2. Nothing else — the options panel, per-course storage, and hide-the-superseded-global-
-   row logic (`showGateDist`, `showFinishDist`) all key off `COURSE_OPTIONS` and
-   `getCourseParam()` generically.
+   row logic (`showGateDist`, `showFinishDist`, `showSlalom`) all key off
+   `COURSE_OPTIONS` and `getCourseParam()` generically.
+
+**A bug this caught:** `gateDist` was only wired into the `wl`/`trap` branch of
+`computeCourse`'s reference-point calculation, not the separate `wlTwin` branch `WR`/`WG`
+use — so their own "distance to gate" option silently did nothing until a dedicated
+regression check (comparing gate position with and without a custom `gateDist`, not just
+"does it produce finite output") caught it. Worth remembering when adding the next course:
+non-crashing isn't the same as correct, and each new mechanism needs a check that would
+actually fail if the wiring were missing.
 
 ## Development
 

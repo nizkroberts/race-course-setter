@@ -228,13 +228,17 @@ const SEQUENCES = {
  *  functionality spec's "prescriptive over configurable" principle.
  *
  *  finish: which branch of computeCourse's finish switch applies.
- *  offsetEligible: only the 8 base signals the docs actually name an
- *    "A" variant for (LA, WA, TWA, TLA, TRA, IA, IWA, LAS) get the
- *    offset checkbox; toggling it is what turns L into LA, TW into TWA,
- *    and so on — see the SEQUENCES comment above. */
+ *  offsetEligible: the shared, single global offset checkbox (see below the
+ *    App component's "offsetActive" and COURSE_OPTIONS' "includeOffset").
+ *    A course only has one or the other, never both — every
+ *    Windward/Leeward course has migrated to its own per-course
+ *    includeOffset (see COURSE_OPTIONS), so none of them set this flag any
+ *    more; TW, TL, TR, I, IW still use the shared one until they migrate
+ *    too. Toggling it is what turns TW into TWA, TL into TLA, and so on —
+ *    see the SEQUENCES comment above. */
 const COURSES = {
-  L: { family: "wl", name: "Windward/leeward, leeward finish", beats: [1, 2, 3, 4], finish: "atStart", offsetEligible: true, group: "Windward/Leeward" },
-  W: { family: "wl", name: "Windward/leeward, windward finish", beats: [2, 3, 4], finish: "windward", offsetEligible: true, group: "Windward/Leeward" },
+  L: { family: "wl", name: "Windward/leeward, leeward finish", beats: [1, 2, 3, 4], finish: "atStart", group: "Windward/Leeward" },
+  W: { family: "wl", name: "Windward/leeward, windward finish", beats: [2, 3, 4], finish: "windward", group: "Windward/Leeward" },
   M: { family: "wl", name: "Match racing, starboard roundings", beats: [2, 3, 4], finish: "atStart", mirror: true, group: "Windward/Leeward",
        note: "Mirrored (starboard) roundings for two-boat match racing. Geometry is otherwise identical to L." },
   LR: { family: "wl", name: "Windward/leeward, reaching finish (port)", beats: [2, 3, 4], finish: "reachGate", finishSide: "p", group: "Windward/Leeward" },
@@ -243,7 +247,7 @@ const COURSES = {
         note: "Windward mark is a gate (1s/1p) — needs room for two boats abeam at the top of the beat." },
   WG: { family: "wlTwin", name: "Twin windward marks, reaching finish (starboard)", beats: [2, 3], finish: "reachGate1", finishSide: "s", group: "Windward/Leeward",
         note: "Windward mark is a gate (1s/1p) — needs room for two boats abeam at the top of the beat." },
-  LS: { family: "wl", name: "Windward/leeward, slalom finish", beats: [2, 3], finish: "slalomGate", offsetEligible: true, group: "Windward/Leeward",
+  LS: { family: "wl", name: "Windward/leeward, slalom finish", beats: [2, 3], finish: "slalomGate", group: "Windward/Leeward",
         note: "Board and foiling classes." },
 
   T: { family: "triT", name: "Triangle, start/finish mid-beat", beats: [1, 2, 3], finish: "atStart", group: "Triangle",
@@ -284,14 +288,44 @@ const COURSE_GROUPS = ["Windward/Leeward", "Triangle", "Trapezoid", "Class-speci
    a new name (gateDist, reachAngle, reachLength) requires computeCourse to
    actually do something with it. `showIf` hides a row unless another key
    in the same course's params is truthy — used for the offset sub-fields. */
+// Reusable option groups, spread into whichever courses' own parameter
+// lists need them, so the same field (and default) isn't retyped —
+// and risk drifting — course to course.
+const GATE_DIST_OPT = {
+  key: "gateDist", label: "Distance to gate from start line, nm", type: "number", default: 0.05, step: 0.01,
+};
+const OFFSET_OPTS = [
+  { key: "includeOffset", label: "Include windward offset (1a)", type: "bool", default: false },
+  { key: "offsetDist", label: "Offset distance, m", type: "number", default: 60, step: 1, showIf: "includeOffset" },
+  { key: "offsetAngle", label: "Offset angle off the wind, deg", type: "number", default: 90, step: 1, showIf: "includeOffset" },
+];
+const REACH_OPTS = [
+  { key: "reachAngle", label: "Angle of reach off the wind, deg (180 = dead run)", type: "number", default: 130, step: 1 },
+  { key: "reachLength", label: "Length of reach to finish, nm", type: "number", default: 0.08, step: 0.01 },
+];
+
 const COURSE_OPTIONS = {
-  LG: [
-    { key: "includeOffset", label: "Include windward offset (1a)", type: "bool", default: false },
-    { key: "offsetDist", label: "Offset distance, m", type: "number", default: 60, step: 1, showIf: "includeOffset" },
-    { key: "offsetAngle", label: "Offset angle off the wind, deg", type: "number", default: 90, step: 1, showIf: "includeOffset" },
-    { key: "gateDist", label: "Distance to gate from start line, nm", type: "number", default: 0.05, step: 0.01 },
-    { key: "reachAngle", label: "Angle of reach off the wind, deg (180 = dead run)", type: "number", default: 130, step: 1 },
-    { key: "reachLength", label: "Length of reach to finish, nm", type: "number", default: 0.08, step: 0.01 },
+  // ---- windward / leeward ----
+  L: [GATE_DIST_OPT, ...OFFSET_OPTS],
+  W: [
+    GATE_DIST_OPT,
+    { key: "finishOffset", label: "Distance from windward mark to finish, nm", type: "number", default: 0.05, step: 0.01 },
+    ...OFFSET_OPTS,
+  ],
+  M: [GATE_DIST_OPT, ...OFFSET_OPTS],
+  LR: [GATE_DIST_OPT, ...OFFSET_OPTS, ...REACH_OPTS],
+  LG: [GATE_DIST_OPT, ...OFFSET_OPTS, ...REACH_OPTS],
+  // No offset for WR/WG: the windward mark is already a gate (1s/1p), and
+  // the docs give no anchor for where a 1a would sit relative to a pair of
+  // marks instead of one.
+  WR: [GATE_DIST_OPT, ...REACH_OPTS],
+  WG: [GATE_DIST_OPT, ...REACH_OPTS],
+  LS: [
+    GATE_DIST_OPT,
+    ...OFFSET_OPTS,
+    { key: "finishApproachDist", label: "Finish distance after slalom, nm", type: "number", default: 0.08, step: 0.01 },
+    { key: "slalomLegDist", label: "Slalom leg length, m", type: "number", default: 60, step: 1 },
+    { key: "slalomAngleStep", label: "Slalom angle between marks, deg", type: "number", default: 18, step: 1 },
   ],
 };
 
@@ -411,19 +445,19 @@ function computeCourse(p) {
 
   const B = p.beat;
   const windwardSide = cfg.mirror ? "stbd" : "port";
+  // p.gateDist, when a course supplies its own (see COURSE_OPTIONS),
+  // overrides the shared start-offset distance for this course only.
+  const gateDist = p.gateDist != null ? p.gateDist : p.startOffset;
   let ref;
 
   if (fam === "wl" || fam === "trap") {
-    // p.gateDist, when a course supplies its own (see COURSE_OPTIONS),
-    // overrides the shared start-offset distance for this course only.
-    const gateDist = p.gateDist != null ? p.gateDist : p.startOffset;
     ref = destination(lineCtr.lat, lineCtr.lon, wa, gateDist);
     gate("G4", ref, 4);
     put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), windwardSide);
   } else if (fam === "wlTwin") {
     // WR / WG: the windward mark is a gate too, so boats can round abeam of
     // each other rather than converging on a single point.
-    ref = destination(lineCtr.lat, lineCtr.lon, wa, p.startOffset);
+    ref = destination(lineCtr.lat, lineCtr.lon, wa, gateDist);
     gate("G4", ref, 4);
     gate("G1", destination(ref.lat, ref.lon, wa, B), 1);
   } else if (fam === "tri" || fam === "oly") {
@@ -545,9 +579,15 @@ function computeCourse(p) {
   const reachFinishLine = (approachFrom, center) => finishLine(center, inverse(approachFrom, center).bearing);
 
   switch (cfg.finish) {
-    case "windward":
-      finishLine(destination(marks.M1.lat, marks.M1.lon, wa, p.startOffset), wa);
+    case "windward": {
+      // p.finishOffset, when a course supplies its own (see COURSE_OPTIONS),
+      // overrides the shared start-offset distance for this leg only —
+      // independent of gateDist, which overrides it for the reference/gate
+      // calculation above. Previously the same shared value did both jobs.
+      const dist = p.finishOffset != null ? p.finishOffset : p.startOffset;
+      finishLine(destination(marks.M1.lat, marks.M1.lon, wa, dist), wa);
       break;
+    }
     case "trapFinish":
       finishLine(destination(marks.G3.lat, marks.G3.lon, norm(wa + 180), p.startOffset), wa);
       break;
@@ -971,9 +1011,12 @@ export default function CourseSetter() {
     offsetAngle: cp("offsetAngle", offsetAngle),
     reachRatio, startOffset,
     gateDist: cp("gateDist", undefined),
+    finishOffset: cp("finishOffset", undefined),
     reachAngle: cp("reachAngle", undefined),
     reachLength: cp("reachLength", undefined),
-    finishApproachDist, slalomLegDist, slalomAngleStep,
+    finishApproachDist: cp("finishApproachDist", finishApproachDist),
+    slalomLegDist: cp("slalomLegDist", slalomLegDist),
+    slalomAngleStep: cp("slalomAngleStep", slalomAngleStep),
     triAngles: { a: 45, b: 90, g: 45 },
   };
 
@@ -1079,12 +1122,14 @@ export default function CourseSetter() {
   if (fix && fix.acc > 10)
     warnings.push(`Position fix is only accurate to ${Math.round(fix.acc)} m.`);
 
-  // Hidden wherever the current course has its own reach geometry (see
-  // COURSE_OPTIONS) — the shared field below would be a no-op for it.
+  // Hidden wherever the current course has its own reach or finish-approach
+  // geometry (see COURSE_OPTIONS) — the shared field below would be a no-op.
   const showFinishDist =
     ["reachGate", "reachGate1", "reachWing", "slalomGate", "slalomTrap"].includes(cfg.finish) &&
+    !hasOwnParam("finishApproachDist") &&
     !(hasOwnParam("reachAngle") && hasOwnParam("reachLength"));
-  const showSlalom = cfg.finish === "slalomGate" || cfg.finish === "slalomTrap";
+  const showSlalom =
+    (cfg.finish === "slalomGate" || cfg.finish === "slalomTrap") && !hasOwnParam("slalomLegDist");
   const showGateDist = !hasOwnParam("gateDist");
 
   return (
