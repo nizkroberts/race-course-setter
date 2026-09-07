@@ -267,6 +267,45 @@ const COURSES = {
 
 const COURSE_GROUPS = ["Windward/Leeward", "Triangle", "Trapezoid", "Class-specific"];
 
+/* ============================================================
+   PER-COURSE OPTIONS
+   The shared inputs elsewhere (start offset, offset distance/angle, finish
+   approach distance...) are global — one value used by every course that
+   reads it. COURSE_OPTIONS is the opposite: a declarative, per-course list
+   of parameters, each with its own stored value, that only that one course
+   exposes and reads. A course with no entry here is untouched — it keeps
+   using the shared globals exactly as before this existed.
+
+   Each entry: { key, label, type ("bool" | "number"), default, step?,
+   unit?, showIf? }. `key` doubles as the field name computeCourse reads
+   off `p` (see how `base` is assembled in the App component below) —
+   reusing an existing field name (offsetDist, offsetAngle) makes a course
+   opt into that shared mechanism with its own independently-stored value;
+   a new name (gateDist, reachAngle, reachLength) requires computeCourse to
+   actually do something with it. `showIf` hides a row unless another key
+   in the same course's params is truthy — used for the offset sub-fields. */
+const COURSE_OPTIONS = {
+  LG: [
+    { key: "includeOffset", label: "Include windward offset (1a)", type: "bool", default: false },
+    { key: "offsetDist", label: "Offset distance, m", type: "number", default: 60, step: 1, showIf: "includeOffset" },
+    { key: "offsetAngle", label: "Offset angle off the wind, deg", type: "number", default: 90, step: 1, showIf: "includeOffset" },
+    { key: "gateDist", label: "Distance to gate from start line, nm", type: "number", default: 0.05, step: 0.01 },
+    { key: "reachAngle", label: "Angle of reach off the wind, deg (180 = dead run)", type: "number", default: 130, step: 1 },
+    { key: "reachLength", label: "Length of reach to finish, nm", type: "number", default: 0.08, step: 0.01 },
+  ],
+};
+
+/** Resolved value of a per-course option: the stored value if the RO has
+ *  touched it, else that option's own default, else undefined if the
+ *  current course doesn't define this key at all (the "untouched, keep
+ *  using the shared global" case computeCourse's fallbacks rely on). */
+function getCourseParam(courseParams, signal, key) {
+  const def = (COURSE_OPTIONS[signal] || []).find((d) => d.key === key);
+  if (!def) return undefined;
+  const stored = courseParams[signal] && courseParams[signal][key];
+  return stored !== undefined ? stored : def.default;
+}
+
 /* A single average speed cannot time a course, because families differ in how
    much of their length is beating. A trapezoid and a windward/leeward of equal
    total length are not equal races: the trapezoid spends two legs reaching at
@@ -375,7 +414,10 @@ function computeCourse(p) {
   let ref;
 
   if (fam === "wl" || fam === "trap") {
-    ref = destination(lineCtr.lat, lineCtr.lon, wa, p.startOffset);
+    // p.gateDist, when a course supplies its own (see COURSE_OPTIONS),
+    // overrides the shared start-offset distance for this course only.
+    const gateDist = p.gateDist != null ? p.gateDist : p.startOffset;
+    ref = destination(lineCtr.lat, lineCtr.lon, wa, gateDist);
     gate("G4", ref, 4);
     put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), windwardSide);
   } else if (fam === "wlTwin") {
@@ -473,8 +515,20 @@ function computeCourse(p) {
   // --- Finish ------------------------------------------------------------
   // Places a finish a short distance from a given mark, back toward the
   // general vicinity of the start line — the default shape of a "reach to
-  // the finish" ending, used for every reach/slalom/IOD finish below.
+  // the finish" ending, used for reach/slalom/IOD finishes with no more
+  // specific geometry supplied.
   const finishNear = (m, distNm) => destination(m.lat, m.lon, inverse(m, lineCtr).bearing, distNm);
+  // A true reach leg off a gate mark, at a given angle off the wind axis
+  // (180 = dead downwind, continuing the flow of the course) and length —
+  // used when a course supplies both (see COURSE_OPTIONS). Falls back to
+  // finishNear's generic heuristic otherwise, so this is a no-op change
+  // for every course that hasn't been given these two parameters yet.
+  // Mirrored by finishSide, matching the s/p mirroring gate() already does.
+  const reachFinish = (gm) => {
+    if (p.reachAngle == null || p.reachLength == null) return finishNear(gm, p.finishApproachDist);
+    const brg = norm(wa + (cfg.finishSide === "s" ? -1 : 1) * p.reachAngle);
+    return destination(gm.lat, gm.lon, brg, p.reachLength);
+  };
   const finishLine = (center, faceBrg) => {
     put("FS", "FS", "Finish, signal end", destination(center.lat, center.lon, norm(faceBrg + 90), lineNm / 4), "stbd");
     put("FP", "FP", "Finish, pin end", destination(center.lat, center.lon, norm(faceBrg - 90), lineNm / 4), "port");
@@ -492,10 +546,10 @@ function computeCourse(p) {
       finishLine(destination(marks.M5.lat, marks.M5.lon, wa, p.startOffset), wa);
       break;
     case "reachGate":
-      finishLine(finishNear(cfg.finishSide === "s" ? marks.G4s : marks.G4p, p.finishApproachDist), wa);
+      finishLine(reachFinish(cfg.finishSide === "s" ? marks.G4s : marks.G4p), wa);
       break;
     case "reachGate1":
-      finishLine(finishNear(cfg.finishSide === "s" ? marks.G1s : marks.G1p, p.finishApproachDist), wa);
+      finishLine(reachFinish(cfg.finishSide === "s" ? marks.G1s : marks.G1p), wa);
       break;
     case "reachWing":
       finishLine(finishNear(marks.M2, p.finishApproachDist), wa);
@@ -874,6 +928,7 @@ export default function CourseSetter() {
   const [finishApproachDist, setFinishApproachDist] = useState(0.08);
   const [slalomLegDist, setSlalomLegDist] = useState(60);
   const [slalomAngleStep, setSlalomAngleStep] = useState(18);
+  const [courseParams, setCourseParams] = useState({});
   const [copied, setCopied] = useState(false);
 
   const cfg = COURSES[signal];
@@ -881,10 +936,28 @@ export default function CourseSetter() {
   const effBeats = beatsAllowed.includes(beats) ? beats : beatsAllowed[0];
   const offsetActive = offset && !!cfg.offsetEligible;
 
+  const courseOptions = COURSE_OPTIONS[signal];
+  // Resolved value of one of THIS course's own options, or `fallback` (the
+  // shared global) if this course doesn't define that key at all.
+  const cp = (key, fallback) => {
+    const v = getCourseParam(courseParams, signal, key);
+    return v !== undefined ? v : fallback;
+  };
+  const hasOwnParam = (key) => !!courseOptions && courseOptions.some((d) => d.key === key);
+  const setCourseParam = (key, value) =>
+    setCourseParams((prev) => ({ ...prev, [signal]: { ...prev[signal], [key]: value } }));
+
   const base = {
-    sigLat, sigLon, windAxis, signal, beats: effBeats, offset: offsetActive, spinnaker,
-    entries, meanLoa, lineFactor, bias, gateWidth, offsetDist, offsetAngle,
-    reachRatio, startOffset, finishApproachDist, slalomLegDist, slalomAngleStep,
+    sigLat, sigLon, windAxis, signal, beats: effBeats, spinnaker,
+    entries, meanLoa, lineFactor, bias, gateWidth,
+    offset: hasOwnParam("includeOffset") ? cp("includeOffset", false) : offsetActive,
+    offsetDist: cp("offsetDist", offsetDist),
+    offsetAngle: cp("offsetAngle", offsetAngle),
+    reachRatio, startOffset,
+    gateDist: cp("gateDist", undefined),
+    reachAngle: cp("reachAngle", undefined),
+    reachLength: cp("reachLength", undefined),
+    finishApproachDist, slalomLegDist, slalomAngleStep,
     triAngles: { a: 45, b: 90, g: 45 },
   };
 
@@ -900,10 +973,13 @@ export default function CourseSetter() {
       else hi = mid;
     }
     return (lo + hi) / 2;
+    // courseParams as a whole, not each resolved field, since which fields
+    // even apply depends on the selected course.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useTarget, manualBeat, targetMin, speed, signal, effBeats, windAxis,
       entries, meanLoa, lineFactor, bias, gateWidth, offsetActive, offsetDist,
       offsetAngle, spinnaker, reachRatio, startOffset, finishApproachDist,
-      slalomLegDist, slalomAngleStep, sigLat, sigLon]);
+      slalomLegDist, slalomAngleStep, sigLat, sigLon, courseParams]);
 
   const course = useMemo(() => computeCourse({ ...base, beat }), [base, beat]);
   const stats = windStats(obs);
@@ -987,8 +1063,13 @@ export default function CourseSetter() {
   if (fix && fix.acc > 10)
     warnings.push(`Position fix is only accurate to ${Math.round(fix.acc)} m.`);
 
-  const showFinishDist = ["reachGate", "reachGate1", "reachWing", "slalomGate", "slalomTrap"].includes(cfg.finish);
+  // Hidden wherever the current course has its own reach geometry (see
+  // COURSE_OPTIONS) — the shared field below would be a no-op for it.
+  const showFinishDist =
+    ["reachGate", "reachGate1", "reachWing", "slalomGate", "slalomTrap"].includes(cfg.finish) &&
+    !(hasOwnParam("reachAngle") && hasOwnParam("reachLength"));
   const showSlalom = cfg.finish === "slalomGate" || cfg.finish === "slalomTrap";
+  const showGateDist = !hasOwnParam("gateDist");
 
   return (
     <div className="app">
@@ -1226,6 +1307,32 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
             )}
           </div>
 
+          {courseOptions && (
+            <div className="panel">
+              <h2>Course options</h2>
+              {courseOptions
+                .filter((d) => !d.showIf || cp(d.showIf, false))
+                .map((d) => (
+                  <div className="row" key={d.key}>
+                    <label htmlFor={`cp-${d.key}`}>{d.label}</label>
+                    {d.type === "bool" ? (
+                      <input id={`cp-${d.key}`} type="checkbox" style={{ width: "auto" }}
+                             checked={!!cp(d.key, d.default)}
+                             onChange={(e) => setCourseParam(d.key, e.target.checked)} />
+                    ) : (
+                      <input id={`cp-${d.key}`} type="number" step={d.step || 1}
+                             value={cp(d.key, d.default)}
+                             onChange={(e) => setCourseParam(d.key, +e.target.value)} />
+                    )}
+                  </div>
+                ))}
+              <p className="note">
+                Specific to {signal} — remembered per course, so switching to another
+                course and back won't lose these.
+              </p>
+            </div>
+          )}
+
           <div className="panel">
             <h2>Length</h2>
             <div className="seg" style={{ marginBottom: 10 }}>
@@ -1309,11 +1416,13 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
               <input id="gw" type="number" value={gateWidth}
                      onChange={(e) => setGateWidth(+e.target.value)} />
             </div>
-            <div className="row">
-              <label htmlFor="so">Line to first mark, nm</label>
-              <input id="so" type="number" step="0.01" value={startOffset}
-                     onChange={(e) => setStartOffset(+e.target.value)} />
-            </div>
+            {showGateDist && (
+              <div className="row">
+                <label htmlFor="so">Line to first mark, nm</label>
+                <input id="so" type="number" step="0.01" value={startOffset}
+                       onChange={(e) => setStartOffset(+e.target.value)} />
+              </div>
+            )}
             {offsetActive && (
               <>
                 <div className="row">

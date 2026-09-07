@@ -102,12 +102,39 @@ demand after that).
 
 **Icons** follow real buoy conventions rather than the app's own port/starboard
 red-green scheme (that stays on the "marks in laying order" table, where rounding side
-is the point): the RC boat is a draggable boat icon labelled "RC" — drag it to reposition
-the signal boat, which recomputes the whole course from wherever you drop it; start and
-finish line ends and the offset mark (1a) are orange circles; every other physical mark
-is an orange tetrahedron. Classification is by each mark's `role` string
-(`isCircleMark()` in `MapView`), not a hardcoded id list, so it holds for every course
-family without per-signal special-casing.
+is the point): the RC boat is a draggable boat icon — drag it to reposition the signal
+boat, which recomputes the whole course from wherever you drop it; start and finish
+line ends and the offset mark (1a) are orange circles; every other physical mark is an
+orange tetrahedron. Classification is by each mark's `role` string (`isCircleMark()` in
+`MapView`), not a hardcoded id list, so it holds for every course family without
+per-signal special-casing.
+
+## Per-course configurability
+
+Most inputs in the app are global — one "line to first mark" distance, one "offset
+distance", used by every course that reads them. `COURSE_OPTIONS` is the opposite: a
+declarative, per-course list of parameters, each with its own independently-remembered
+value, shown in a "Course options" panel that only appears for courses that define one.
+Switching from a configured course to another and back doesn't lose its settings.
+
+`LG` (windward/leeward, reaching finish to starboard) is the first course wired up this
+way, with four options: **include windward offset** (its own `includeOffset` /
+`offsetDist` / `offsetAngle`, independent of the shared offset used by `L`/`W`/etc.),
+**distance to gate from start line** (overrides the shared start-offset for this course
+only), **angle of reach** (degrees off the wind axis for the final reaching leg — a
+parameter that didn't exist before this; other reach finishes still use the old generic
+"toward the start line" heuristic), and **length of reach to finish**.
+
+Extending another course to this pattern is two steps:
+
+1. Add an entry to `COURSE_OPTIONS[SIGNAL]` — reusing an existing field name
+   (`offsetDist`, `startOffset`, ...) opts that course into a mechanism that already
+   exists, elsewhere in `computeCourse`, with its own stored value; a genuinely new
+   concept (like `reachAngle`) needs `computeCourse` taught what to do with it once,
+   the same way `gateDist`/`reachAngle`/`reachLength` were added for `LG`.
+2. Nothing else — the options panel, per-course storage, and hide-the-superseded-global-
+   row logic (`showGateDist`, `showFinishDist`) all key off `COURSE_OPTIONS` and
+   `getCourseParam()` generically.
 
 ## Development
 
