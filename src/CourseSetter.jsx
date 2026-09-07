@@ -402,13 +402,27 @@ const COURSE_OPTIONS = {
     { key: "slalomAngleStep", label: "Slalom angle between marks, deg", type: "number", default: 18, step: 1 },
   ],
 
+  // ---- triangle ----
+  // TW/TL/TR's leeward gate (G3, for this family — trapezoid's own leeward
+  // gate is G4) sits above the start line exactly like the windward/leeward
+  // family's G4 does, using the same gateDist mechanism.
+  TW: [GATE_DIST_OPT],
+  TL: [GATE_DIST_OPT],
+  TR: [GATE_DIST_OPT],
+
   // ---- trapezoid ----
-  // I/O both finish with a reach off the single port mark of gate 3 (the
-  // doc's own I2: "Start – 1 – 4s/4p – 1 – 2 – 3p – Finish" — only the mark
-  // actually rounded is a mark of the course), same reachGate mechanism LR
-  // already uses off gate 4 — see the reachGate case in computeCourse.
-  I: [...REACH_OPTS],
-  O: [...REACH_OPTS],
+  // Every trapezoid signal has a leeward gate (G4) above the start line,
+  // same as windward/leeward's G4 — I/O also finish with a reach off the
+  // single port mark of gate 3 (the doc's own I2: "Start – 1 – 4s/4p – 1 –
+  // 2 – 3p – Finish" — only the mark actually rounded is a mark of the
+  // course), same reachGate mechanism LR already uses off gate 4 — see the
+  // reachGate case in computeCourse.
+  I: [GATE_DIST_OPT, ...REACH_OPTS],
+  O: [GATE_DIST_OPT, ...REACH_OPTS],
+  IW: [GATE_DIST_OPT],
+  OW: [GATE_DIST_OPT],
+  IS: [GATE_DIST_OPT],
+  OS: [GATE_DIST_OPT],
 };
 
 /** Resolved value of a per-course option: the stored value if the RO has
@@ -546,7 +560,7 @@ function computeCourse(p) {
     // Modern triangle: leeward mark is a gate. Olympic triangle (legacy):
     // a single leeward mark, per class-specific.md's marks table — that's
     // the only geometric difference between the two families.
-    ref = destination(lineCtr.lat, lineCtr.lon, wa, p.startOffset);
+    ref = destination(lineCtr.lat, lineCtr.lon, wa, gateDist);
     if (fam === "oly") put("G3", "3", "Leeward mark", ref, "port");
     else gate("G3", ref, 3);
     put("M1", "1", "Windward mark", destination(ref.lat, ref.lon, wa, B), "port");

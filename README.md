@@ -166,6 +166,23 @@ followed correctly. Fixed by changing the trailing token to `G3p` and switching
 `G4`) — so `I`/`O` now share the same reach-finish machinery as `LR`, per the docs, not
 a bespoke one that had quietly drifted from them.
 
+**Every course with a leeward gate above the start line now has its own `gateDist`** —
+not just the windward/leeward family. That's `I`, `O`, `IW`, `OW`, `IS`, `OS` (gate `G4`,
+the trapezoid's own leeward gate, distinct from its outer gate `G3`) and `TW`, `TL`, `TR`
+(gate `G3` — for the triangle family *that's* the leeward gate; there's no `G4`). `T`,
+`IOD`, and `OLY` were deliberately left out: `T`'s reference is the start line's own
+midpoint with no gate at all; `IOD`'s gate sits 120° off the wind axis, not above the
+line, a different construction entirely; `OLY`'s leeward mark is a single mark, not a
+gate, per `class-specific.md`.
+
+**Another bug this caught, same class as the one below:** the `tri`/`oly` branch of
+`computeCourse` read `p.startOffset` directly for its reference point instead of the
+`gateDist` variable (`p.gateDist ?? p.startOffset`) computed one line above it — so a
+`TW`/`TL`/`TR` course's own `gateDist` option would have silently done nothing, exactly
+like the `wlTwin` bug before it. Fixed alongside adding the option, and verified this
+time by actually moving the gate for all 9 newly-configured courses and confirming it
+moved, not just that the course still computes.
+
 **A bug this caught:** `gateDist` was only wired into the `wl`/`trap` branch of
 `computeCourse`'s reference-point calculation, not the separate `wlTwin` branch `WR`/`WG`
 use — so their own "distance to gate" option silently did nothing until a dedicated
