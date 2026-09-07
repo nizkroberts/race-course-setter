@@ -1488,6 +1488,139 @@ function newSaveId() {
 }
 
 /* ============================================================
+   COURSE CODE — a short, fully text-based encoding of the same design
+   inputs SAVE_FIELDS covers (minus pure display prefs — showMag/variation
+   change how numbers are shown, not where marks are, so they're not part
+   of "the course"), meant to be read over the phone, texted, or pasted
+   between independent instances of the app rather than stored.
+
+   Every field is only written when it differs from CODE_DEFAULTS, so a
+   mostly-default course stays short; latitude/longitude are the
+   exception, always written, since a course without a position isn't
+   really a course. Numbers are rounded to the fewest decimal places that
+   still matter for that field (5 for lat/lon — ~1m — is already tighter
+   than any tolerance this app computes) rather than full precision, and
+   courseParams is scoped to the ONE signal actually selected, not every
+   signal ever touched this session — both purely for length.
+   ============================================================ */
+
+const CODE_VERSION = "RC1";
+
+const CODE_FIELDS = [
+  { key: "windAxis", code: "wa", type: "num", places: 1, default: 225 },
+  { key: "signal", code: "cs", type: "str", default: "L" },
+  { key: "beats", code: "bt", type: "num", places: 0, default: 3 },
+  { key: "offset", code: "of", type: "bool", default: true },
+  { key: "spinnaker", code: "sp", type: "bool", default: false },
+  { key: "useTarget", code: "ut", type: "bool", default: true },
+  { key: "targetMin", code: "tm", type: "num", places: 0, default: 50 },
+  { key: "windSpeed", code: "ws", type: "num", places: 1, default: WIND_REF_KTS },
+  { key: "cls", code: "cl", type: "str", default: "ILCA 6" },
+  { key: "manualBeat", code: "mb", type: "num", places: 2, default: 1 },
+  { key: "entries", code: "en", type: "num", places: 0, default: 30 },
+  { key: "meanLoa", code: "ml", type: "num", places: 1, default: 4.2 },
+  { key: "lineFactor", code: "lf", type: "num", places: 2, default: 1.35 },
+  { key: "bias", code: "bi", type: "num", places: 0, default: 5 },
+  { key: "gateWidth", code: "gw", type: "num", places: 0, default: 60 },
+  { key: "offsetDist", code: "od", type: "num", places: 0, default: 60 },
+  { key: "offsetAngle", code: "oa", type: "num", places: 0, default: 90 },
+  { key: "reachRatio", code: "rr", type: "num", places: 3, default: 0.5 },
+  { key: "startOffset", code: "so", type: "num", places: 3, default: 0.05 },
+  { key: "finishApproachDist", code: "fd", type: "num", places: 3, default: 0.08 },
+  { key: "slalomLegDist", code: "sl", type: "num", places: 0, default: 60 },
+  { key: "slalomAngleStep", code: "sa", type: "num", places: 0, default: 18 },
+];
+const CODE_BY_KEY = Object.fromEntries(CODE_FIELDS.map((f) => [f.key, f]));
+const FIELD_BY_CODE = Object.fromEntries(CODE_FIELDS.map((f) => [f.code, f]));
+
+const roundN = (v, n) => Number(v.toFixed(n));
+
+// Cheap, non-cryptographic checksum — just enough to catch a truncated
+// paste or a mistyped character, the realistic failure modes for a
+// string handed over by text message.
+function checksum(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return (h % 1296).toString(36).padStart(2, "0");
+}
+
+function encodeCourseCode(values) {
+  const parts = [`la=${roundN(values.sigLat, 5)}`, `lo=${roundN(values.sigLon, 5)}`];
+  for (const f of CODE_FIELDS) {
+    const raw = values[f.key];
+    if (f.type === "bool") {
+      const v = !!raw;
+      if (v !== f.default) parts.push(`${f.code}=${v ? 1 : 0}`);
+    } else if (f.type === "num") {
+      const v = roundN(raw, f.places);
+      if (v !== f.default) parts.push(`${f.code}=${v}`);
+    } else if (raw !== f.default) {
+      parts.push(`${f.code}=${raw}`);
+    }
+  }
+  const cp = (values.courseParams && values.courseParams[values.signal]) || {};
+  const cpEntries = Object.entries(cp).filter(([, v]) => v !== undefined);
+  if (cpEntries.length) {
+    parts.push(`cp=${cpEntries.map(([k, v]) => `${k}:${typeof v === "boolean" ? (v ? 1 : 0) : v}`).join(",")}`);
+  }
+  const body = parts.join(";");
+  return `${CODE_VERSION};${body}#${checksum(body)}`;
+}
+
+/** Returns { ok:true, state } or { ok:false, error }. `state` is a partial
+ *  SAVE_FIELDS-shaped object — same shape handleLoadCourse already knows
+ *  how to apply, so loading a code and loading a saved course share code. */
+function decodeCourseCode(code) {
+  const str = (code || "").trim();
+  const m = str.match(/^([A-Za-z0-9]+);(.*)#([0-9a-z]{2})$/);
+  if (!m) return { ok: false, error: "Doesn't look like a course code — check it was pasted in full." };
+  const [, version, body, sum] = m;
+  if (version !== CODE_VERSION) return { ok: false, error: `Unrecognized code version "${version}".` };
+  if (checksum(body) !== sum) {
+    return { ok: false, error: "Checksum doesn't match — this code may be truncated or mistyped." };
+  }
+
+  const state = {};
+  let signal = "L"; // resolved first, since courseParams needs it
+  for (const pair of body.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq < 0) continue;
+    const key = pair.slice(0, eq), val = pair.slice(eq + 1);
+    if (key === "cs") signal = val;
+  }
+  state.signal = COURSES[signal] ? signal : "L";
+
+  for (const pair of body.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq < 0) continue;
+    const key = pair.slice(0, eq), val = pair.slice(eq + 1);
+    if (key === "la") state.sigLat = parseFloat(val);
+    else if (key === "lo") state.sigLon = parseFloat(val);
+    else if (key === "cp") {
+      const defs = COURSE_OPTIONS[state.signal] || [];
+      const cp = {};
+      val.split(",").forEach((entry) => {
+        const ci = entry.indexOf(":");
+        if (ci < 0) return;
+        const k = entry.slice(0, ci), v = entry.slice(ci + 1);
+        const def = defs.find((d) => d.key === k);
+        if (!def) return;
+        cp[k] = def.type === "bool" ? v === "1" : parseFloat(v);
+      });
+      state.courseParams = { [state.signal]: cp };
+    } else {
+      const f = FIELD_BY_CODE[key];
+      if (!f) continue; // unknown field (older/newer version) — skip, don't fail the whole code
+      state[f.key] = f.type === "bool" ? val === "1" : f.type === "num" ? parseFloat(val) : val;
+    }
+  }
+  if (!isFinite(state.sigLat) || !isFinite(state.sigLon)) {
+    return { ok: false, error: "Course code is missing a position." };
+  }
+  return { ok: true, state };
+}
+
+/* ============================================================
    WIND SHIFT — "what if the wind moved" comparison against the current
    design, without touching it. Config lives on its own tab; the visual
    result (faded ghost marks) draws back on the Course Design map.
@@ -1643,6 +1776,34 @@ function WindShiftTab({ windAxis, variation, showMag, shiftWindAxis, onShiftWind
 }
 
 /* ============================================================
+   COLLAPSIBLE PANEL
+   ============================================================ */
+
+/** A <div className="panel"> whose body can be tucked away to just the
+ *  header. The Course Design left column accumulates enough panels that
+ *  being able to hide the ones you're not touching right now matters
+ *  more than always seeing every field at once. Uncontrolled (each
+ *  instance owns its own open/closed state) — nothing else in the app
+ *  needs to know or coordinate which panels are open. */
+function CollapsiblePanel({ title, badge, defaultOpen = true, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="panel">
+      <button type="button" className="panel-h2-btn" aria-expanded={open}
+              style={open ? undefined : { marginBottom: 0 }}
+              onClick={() => setOpen((o) => !o)}>
+        <span>{title}</span>
+        <span className="panel-h2-right">
+          {badge}
+          <span className="panel-toggle" aria-hidden="true">{open ? "−" : "+"}</span>
+        </span>
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+/* ============================================================
    APP
    ============================================================ */
 
@@ -1652,6 +1813,8 @@ export default function CourseSetter() {
   const [savedCourses, setSavedCourses] = useState(() => readSavedCourses());
   const [saveName, setSaveName] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
+  const [courseCodeIn, setCourseCodeIn] = useState("");
+  const [codeMsg, setCodeMsg] = useState("");
 
   const [windShiftOn, setWindShiftOn] = useState(false);
   const [shiftWindAxis, setShiftWindAxis] = useState(225);
@@ -1903,6 +2066,35 @@ export default function CourseSetter() {
     setSavedCourses(next);
   };
 
+  // Live — regenerates as you tweak inputs, same as the radio-text panel.
+  const courseCode = encodeCourseCode(stateValues);
+  const flashCodeMsg = (msg) => {
+    setCodeMsg(msg);
+    setTimeout(() => setCodeMsg(""), 3000);
+  };
+
+  const handleCopyCode = () => {
+    if (navigator.clipboard) navigator.clipboard.writeText(courseCode).catch(() => {});
+    flashCodeMsg("Code copied.");
+  };
+
+  const handleLoadCode = () => {
+    const result = decodeCourseCode(courseCodeIn);
+    if (!result.ok) {
+      flashCodeMsg(result.error);
+      return;
+    }
+    const { courseParams: cpPatch, ...rest } = result.state;
+    Object.keys(rest).forEach((k) => {
+      if (stateSetters[k]) stateSetters[k](rest[k]);
+    });
+    // Merge, not replace — a code only carries the one signal's own
+    // options, and loading it shouldn't wipe out tuning saved for others.
+    if (cpPatch) setCourseParams((prev) => ({ ...prev, ...cpPatch }));
+    setCourseCodeIn("");
+    flashCodeMsg("Course loaded from code.");
+  };
+
   const radioText = order
     .map((m, i) => {
       const d = toDDM(m.lat, m.lon);
@@ -1985,6 +2177,14 @@ export default function CourseSetter() {
 .panel + .panel{margin-top:12px}
 .panel h2{font-size:14px;font-weight:600;margin:0 0 10px;color:var(--deep);
   letter-spacing:.02em;display:flex;justify-content:space-between;align-items:baseline}
+.panel-h2-btn{font-family:inherit;font-size:14px;font-weight:600;margin:0 0 10px;
+  color:var(--deep);letter-spacing:.02em;display:flex;justify-content:space-between;
+  align-items:baseline;width:100%;border:0;background:transparent;padding:0;cursor:pointer}
+.panel-h2-btn:hover{opacity:.8}
+.panel-h2-right{display:flex;align-items:center;gap:8px}
+.panel-toggle{display:inline-flex;align-items:center;justify-content:center;
+  width:17px;height:17px;border:1px solid var(--rule);color:var(--muted);
+  font-size:13px;line-height:1;flex-shrink:0}
 .row{display:flex;gap:9px;align-items:center;margin-bottom:8px}
 .row label{flex:1;font-size:15px;color:var(--muted)}
 .app input[type=number],.app input[type=text],.app select{
@@ -2086,8 +2286,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
 
       <div className="grid">
         <div>
-          <div className="panel">
-            <h2>Saved courses</h2>
+          <CollapsiblePanel title="Saved courses" defaultOpen={false}>
             <div className="row">
               <label htmlFor="svname">Name</label>
               <input id="svname" type="text" className="wide" value={saveName}
@@ -2124,10 +2323,30 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
               </p>
             )}
             <p className="note">Stored in this browser only — not synced anywhere.</p>
-          </div>
+          </CollapsiblePanel>
 
-          <div className="panel">
-            <h2>Signal boat</h2>
+          <CollapsiblePanel title="Course code" defaultOpen={false}>
+            <p className="note">
+              A short text code for this course — read it over the radio, text it, paste
+              it anywhere. Loading one on another device reproduces the same course there,
+              independent of anything saved in this browser.
+            </p>
+            <textarea readOnly value={courseCode} style={{ height: 54 }} />
+            <div className="row" style={{ marginTop: 8 }}>
+              <label>{courseCode.length} characters</label>
+              <button className="ghost" onClick={handleCopyCode}>Copy</button>
+            </div>
+            <div className="row" style={{ marginTop: 10 }}>
+              <label htmlFor="ccin">Load a code</label>
+              <input id="ccin" type="text" className="wide" value={courseCodeIn}
+                     placeholder="Paste a course code"
+                     onChange={(e) => setCourseCodeIn(e.target.value)} />
+            </div>
+            <button onClick={handleLoadCode} disabled={!courseCodeIn.trim()}>Load code</button>
+            {codeMsg && <p className="note">{codeMsg}</p>}
+          </CollapsiblePanel>
+
+          <CollapsiblePanel title="Signal boat">
             <div className="row">
               <label htmlFor="lat">Latitude</label>
               <input id="lat" type="number" step="0.000001" value={sigLat}
@@ -2151,13 +2370,9 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 Placeholder position. Read a fix, type one in, or drag the RC boat on the map.
               </p>
             )}
-          </div>
+          </CollapsiblePanel>
 
-          <div className="panel">
-            <h2>
-              Wind
-              <span className="tiny">{showMag ? "magnetic" : "true"}</span>
-            </h2>
+          <CollapsiblePanel title="Wind" badge={<span className="tiny">{showMag ? "magnetic" : "true"}</span>}>
             <div className="row">
               <label htmlFor="wa">Axis, degrees the wind blows from</label>
               <input id="wa" type="number" value={Math.round(dispBrg(windAxis))}
@@ -2201,10 +2416,9 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 </div>
               </>
             )}
-          </div>
+          </CollapsiblePanel>
 
-          <div className="panel">
-            <h2>Course</h2>
+          <CollapsiblePanel title="Course">
             <select className="wide" value={signal} aria-label="Course type"
                     onChange={(e) => {
                       const ns = e.target.value;
@@ -2260,11 +2474,10 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 </div>
               </>
             )}
-          </div>
+          </CollapsiblePanel>
 
           {courseOptions && (
-            <div className="panel">
-              <h2>Course options</h2>
+            <CollapsiblePanel title="Course options">
               {courseOptions
                 .filter((d) => !d.showIf || cp(d.showIf, false))
                 .map((d) => (
@@ -2285,11 +2498,10 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 Specific to {signal} — remembered per course, so switching to another
                 course and back won't lose these.
               </p>
-            </div>
+            </CollapsiblePanel>
           )}
 
-          <div className="panel">
-            <h2>Length</h2>
+          <CollapsiblePanel title="Length">
             <div className="seg" style={{ marginBottom: 10 }}>
               <button data-on={useTarget} onClick={() => setUseTarget(true)}>From target time</button>
               <button data-on={!useTarget} onClick={() => setUseTarget(false)}>Set beat directly</button>
@@ -2344,10 +2556,9 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                        onChange={(e) => setManualBeat(+e.target.value)} />
               </div>
             )}
-          </div>
+          </CollapsiblePanel>
 
-          <div className="panel">
-            <h2>Line and marks</h2>
+          <CollapsiblePanel title="Line and marks">
             <div className="row">
               <label htmlFor="en">Boats entered</label>
               <input id="en" type="number" value={entries} onChange={(e) => setEntries(+e.target.value)} />
@@ -2417,7 +2628,7 @@ textarea{width:100%;height:150px;font-family:'IBM Plex Mono',monospace;font-size
                 </p>
               </>
             )}
-          </div>
+          </CollapsiblePanel>
         </div>
 
         <div>

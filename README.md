@@ -314,6 +314,46 @@ directly, sidestepping the paste/parse step entirely for anyone with the app or 
 browser tab handy). The DDM display and the radio-text block are unchanged — that
 format is still correct for its actual purpose, reading a position aloud.
 
+## Course code
+
+A "Course code" panel (Course Design, next to Saved Courses) turns the design inputs
+into a short, portable text string — for reading over the radio, texting, or pasting
+between independent instances of the app, as opposed to Saved Courses' `localStorage`
+persistence (which never leaves this browser). `encodeCourseCode()` / `decodeCourseCode()`
+cover the same ground as `SAVE_FIELDS`, minus pure display prefs (`showMag`/`variation`
+change how numbers are shown, not where marks are) and the manual speed override (kept
+out purely for length — dropping it was the one real fidelity trade made here), scoped
+to only the *currently selected* course's own `courseParams`, not every signal ever
+touched this session.
+
+**Short by construction, not compression**: every field is written only when it differs
+from a documented default (`CODE_FIELDS`), so a plain, mostly-default course encodes to
+`RC1;la=44.4;lo=-78.7#t6` — ~25 characters — while a heavily customized one (a
+non-default signal, five course-specific options, several global overrides) still comes
+in under 160, a single SMS segment, in testing. Latitude/longitude are the one exception,
+always written — a course without a position isn't a course — at 5 decimal places
+(~1 m), tighter than any tolerance this app itself computes.
+
+A trailing 2-character checksum (`checksum()`, a cheap non-cryptographic rolling hash —
+plenty for catching a truncated paste or a mistyped digit, the realistic failure modes
+for a string handed over by text message) is verified before anything is applied; a
+mismatch or malformed string is rejected with a specific reason rather than silently
+producing a wrong course. Verified: round-tripping a heavily customized course through
+encode → decode → apply reproduces mark 1's position to within 0.3 m of the original
+(consistent with the deliberate 5-decimal-place trim, not a bug); truncated, corrupted,
+garbage, and empty input are all correctly rejected with a specific error each.
+
+## Collapsible panels
+
+Course Design's left column accumulated eight panels (Saved Courses, Course Code,
+Signal Boat, Wind, Course, Course Options, Length, Line and Marks) — enough that seeing
+every field at once stopped being the point. `CollapsiblePanel` wraps each one: click the
+header (or its +/− indicator) to tuck the body away to just the title. Each instance owns
+its own open/closed state — nothing coordinates them, and nothing needs to. Saved
+Courses and Course Code (the newest, most occasional panels — most sessions touch them
+never or once) default collapsed; the five original design panels default open, so nothing
+about the DEFAULT view changes, only what's now possible to tuck away.
+
 ## Development
 
 ```
