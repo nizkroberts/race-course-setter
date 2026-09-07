@@ -166,10 +166,27 @@ actually fail if the wiring were missing.
 A second tab (`MarkSetterTab`), alongside Course Design, for actually laying a mark:
 pick one of the current course's designed positions from a dropdown, and it turns "get
 there" into a distance in metres and a bearing to steer, on a zoomed-in map showing the
-target and a "good enough" tolerance circle around it (radius from `markTolerance()` —
-the functionality spec's per-role tolerance model: ±25 m for a windward/gate mark,
-±20 m for a wing/reach mark, ±10 m for a start/finish line end, ±8 m for the offset,
-±5 m for a slalom mark).
+target and a "good enough" tolerance circle around it.
+
+**Tolerance is computed dynamically, not a flat number per role** (`markTolerance()`).
+The functionality spec's own tolerance table (§7) offers flat distances — ±25 m
+windward/gate, ±20 m wing/reach — but its actual recommendation is to compute
+tolerance as "the position error that produces a defined angular error at the relevant
+vertex... the numbers stay correct when someone sets an unusually short beat," which
+the flat table doesn't do. `markTolerance()` follows that instead: for a windward mark,
+a leeward gate, or a wing/reach mark, it finds the real leg in the current course that
+depends on that mark's position (`course.legs.find(l => l.to.id === ...)`, falling back
+to a gate's virtual centre for a physical sub-mark like `G4p`, which isn't usually a leg
+endpoint itself) and asks how far off that mark can be before it skews that leg by more
+than `TOL_ANGLE_DEG` (0.5°, a full order of magnitude under `windward-leeward.md`'s own
+"5 degrees turns a beat into a one-tack fetch"), floored at `TOL_MIN_M` (5 m — tighter
+than a handheld GPS can reliably hit anyway). Result: a windward mark on a typical
+0.5–1nm club beat now reads roughly 9–17 m, not a flat 25 — the flat number was loosest
+exactly where it mattered most, on the shorter beats most club racing actually sails.
+The offset (8 m), slalom marks (5 m), and start/finish line ends (10 m) keep the spec's
+flat figures — their legs are short and largely fixed-length regardless of beat, so the
+angular formula would only ever collapse to the same 5 m floor anyway (verified before
+keeping the simpler flat number, rather than assuming).
 
 "Current position" is independent of the Course Design tab's signal boat — it's a
 different boat. **Track my position** starts a live `watchPosition()` GPS feed;

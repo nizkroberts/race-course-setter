@@ -939,17 +939,49 @@ function MapView({ course, windAxis, sigLat, sigLon, onMoveSignalBoat }) {
    MARK SETTER — navigate a mark boat to one designed position
    ============================================================ */
 
-// Per-role "good enough" tolerance, in metres. From the functionality
-// spec's tolerance model: position error matters in proportion to leg
-// length, so it's expressed per mark role rather than as one global
-// distance — a lateral error that's nothing on a long beat destroys the
-// geometry a short offset or slalom leg exists to create.
-function markTolerance(m) {
+// "Good enough" tolerance, in metres — computed dynamically per the
+// functionality spec's OWN recommendation (§7), not the flat table it
+// offers as a simpler starting point: "compute tolerance as the position
+// error that produces a defined angular error at the relevant vertex...
+// the numbers stay correct when someone sets an unusually short beat." A
+// flat distance is loose on a short beat and needlessly tight on a long
+// one; this instead asks "how far off can this mark be before it skews
+// the leg that depends on it by more than TOL_ANGLE_DEG?"
+//
+// windward-leeward.md's own race-committee notes: "a beat even 5 degrees
+// skewed turns the first leg into a one-tack fetch and the race is
+// effectively decided at the start." TOL_ANGLE_DEG is a full order of
+// magnitude under that failure threshold, not a fraction of it.
+const TOL_ANGLE_DEG = 0.5;
+const TOL_MIN_M = 5; // tighter than this asks more than a handheld GPS can reliably deliver
+
+function angularTolerance(legM) {
+  return Math.max(TOL_MIN_M, (legM != null ? legM : 0) * Math.tan(rad(TOL_ANGLE_DEG)));
+}
+
+// Very short, geometry-defining legs (the offset, a slalom leg) stay at
+// the functionality spec's own flat suggestion rather than the angle
+// formula, which would ask for near-nothing on a ~60 m leg — tighter than
+// TOL_MIN_M can reliably hit anyway, and the spec's number is already a
+// deliberately tight, short-leg-specific figure, not a starting-point one.
+function markTolerance(m, course) {
   if (m.id === "M1A") return 8;
   if (/^S[123]$/.test(m.id)) return 5;
+  // Line length in real fleets (well under ~500m) never clears TOL_MIN_M
+  // at TOL_ANGLE_DEG anyway, so "scale it like the others" would just be
+  // a silent, pointless drop from 10 to the 5m floor — the flat spec
+  // value stays, same as the offset and slalom figures above.
   if (m.role.startsWith("Start") || m.role.startsWith("Finish")) return 10;
-  if (m.role === "Wing mark" || m.role === "Reach mark") return 20;
-  return 25; // windward mark, gate marks, mark 5
+
+  // Everything else: the actual leg arriving at this mark in the sailed
+  // sequence — the beat for a windward mark, the run for a leeward gate,
+  // the reach for a wing/reach mark. Falls back to the gate's virtual
+  // centre for a physical gate sub-mark (G4s/G4p/...), which usually
+  // isn't itself a leg endpoint — most roundings pass through the gate
+  // rather than round one specific side of it.
+  const centerId = m.id.replace(/[sp]$/, "");
+  const leg = course.legs.find((l) => l.to.id === m.id) || course.legs.find((l) => l.to.id === centerId);
+  return angularTolerance(leg ? leg.dist * M_PER_NM : null);
 }
 
 // A fixed, north-up compass rose — there's no heading sensor here, just a
@@ -1140,7 +1172,7 @@ function MarkSetterTab({ course, dispBrg, showMag }) {
 
   const nav = target ? inverse({ lat: boatLat, lon: boatLon }, target) : null;
   const distM = nav ? nav.dist * M_PER_NM : null;
-  const tol = target ? markTolerance(target) : null;
+  const tol = target ? markTolerance(target, course) : null;
   const withinTol = distM != null && tol != null && distM <= tol;
   const dispNavBrg = nav ? dispBrg(nav.bearing) : null;
 
@@ -1199,7 +1231,7 @@ function MarkSetterTab({ course, dispBrg, showMag }) {
                   <span>bearing</span>
                   <strong>{String(Math.round(dispNavBrg)).padStart(3, "0")}&deg;{showMag ? "M" : "T"}</strong>
                 </div>
-                <div><span>good within</span><strong>&plusmn;{tol} m</strong></div>
+                <div><span>good within</span><strong>&plusmn;{Math.round(tol)} m</strong></div>
               </div>
               <div style={{ display: "flex", justifyContent: "center", margin: "6px 0 14px" }}>
                 <BearingCompass bearing={dispNavBrg} />
