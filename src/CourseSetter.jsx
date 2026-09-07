@@ -1816,7 +1816,7 @@ export default function CourseSetter() {
   const [courseCodeIn, setCourseCodeIn] = useState("");
   const [codeMsg, setCodeMsg] = useState("");
 
-  const [windShiftOn, setWindShiftOn] = useState(false);
+  const [windShiftOn, setWindShiftOn] = useState(true);
   const [shiftWindAxis, setShiftWindAxis] = useState(225);
   const [tackAngle, setTackAngle] = useState(42); // degrees off the wind per tack; modifiable assumption
   const shiftTouchedRef = useRef(false);
